@@ -19,6 +19,7 @@ from __future__ import annotations
 import csv
 import os
 import time
+import traceback
 from pathlib import Path
 
 import modal
@@ -105,8 +106,10 @@ UA = "bacterialmorphospace/0.1 (research; genome download)"
 def _plain_call(fn, *args, **kwargs):
     try:
         return core.plain(fn(*args, **kwargs))
-    except Exception as e:  # noqa: BLE001
-        raise RuntimeError(f"{type(e).__name__}: {e}") from None
+    except Exception:  # noqa: BLE001
+        # A builtin RuntimeError unpickles anywhere, but its message must carry the original traceback
+        # (`from None` would drop it), because the local side only ever sees this string.
+        raise RuntimeError("remote function failed:\n" + traceback.format_exc()) from None
 
 
 @app.function(image=gpu_image, gpu=GPU, timeout=900)
@@ -275,15 +278,29 @@ def _save_npy(path: str, arr) -> None:
 class Embedder:
     @modal.enter()
     def load(self):
+        """Never raises. A crash here kills the container before any input runs, and the caller then sees
+        only Modal's generic "cancelled by user or a failure" for every input. Instead the traceback is
+        kept and returned by every `embed` call, and the steps are printed so they appear in the app logs."""
+        import faulthandler
+
+        faulthandler.enable()  # a native crash (CUDA/triton segfault) dumps its stack to the container log
+        self.task_id = os.environ.get("MODAL_TASK_ID", "local")
+        self.model, self.load_error = None, None
         t0 = time.perf_counter()
         try:
+            print("[enter] importing evo2", flush=True)
             from evo2 import Evo2
 
+            print(f"[enter] loading {core.MODEL_NAME}", flush=True)
             self.model = Evo2(core.MODEL_NAME)
-        except Exception as e:  # noqa: BLE001  torch/CUDA exception classes do not unpickle locally
-            raise RuntimeError(f"model load failed: {type(e).__name__}: {e}") from None
+            import torch
+
+            print(f"[enter] loaded in {time.perf_counter() - t0:.0f}s; "
+                  f"CUDA memory {torch.cuda.memory_allocated() / 1e9:.1f} GB", flush=True)
+        except Exception:  # noqa: BLE001
+            self.load_error = traceback.format_exc()
+            print("[enter] MODEL LOAD FAILED:\n" + self.load_error, flush=True)
         self.load_s = time.perf_counter() - t0
-        self.task_id = os.environ.get("MODAL_TASK_ID", "local")
 
     def _embed_windows(self, seqs: list[str], windows: list[tuple[int, int]], batch_size: int):
         import numpy as np
@@ -324,6 +341,8 @@ class Embedder:
         t_call = time.perf_counter()
         base = {"acc": acc, "task_id": self.task_id, "load_s": self.load_s}
         try:
+            if self.load_error:
+                raise RuntimeError("the model failed to load in this container:\n" + self.load_error)
             os.makedirs(EMB_DIR, exist_ok=True)
             pool_n = max(depths)
             npy = {n: f"{EMB_DIR}/{acc}__n{n}.npy" for n in depths}
@@ -364,8 +383,9 @@ class Embedder:
             return {**base, "ok": True, "status": status, "gpu_seconds": time.perf_counter() - t_call,
                     "usable_len": meta["usable_len"], "n_contigs_used": meta["n_contigs_used"],
                     "max_non_acgt_frac": meta["max_non_acgt_frac"]}
-        except Exception as e:  # noqa: BLE001  deterministic failures are reported, not retried
-            return {**base, "ok": False, "error": f"{type(e).__name__}: {e}", "gpu_seconds": time.perf_counter() - t_call}
+        except Exception:  # noqa: BLE001  deterministic failures are reported (with traceback), not retried
+            print(f"[embed] {acc} FAILED:\n{traceback.format_exc()}", flush=True)
+            return {**base, "ok": False, "error": traceback.format_exc(), "gpu_seconds": time.perf_counter() - t_call}
 
 
 @app.function(image=cpu_image, volumes={OUT_DIR: out_vol}, timeout=1800, cpu=2, memory=8192)
@@ -380,6 +400,14 @@ def _evaluate_sweep(rows: list[dict], depths: list[int], n_splits: int) -> dict:
     import numpy as np
 
     out_vol.reload()
+    # Precondition, checked before any work: every genome must have all its depth .npy files and a meta file.
+    lacking = [r["acc"] for r in rows
+               if not (os.path.exists(f"{EMB_DIR}/{r['acc']}__meta.json")
+                       and all(os.path.exists(f"{EMB_DIR}/{r['acc']}__n{n}.npy") for n in depths))]
+    if not rows or lacking:
+        raise RuntimeError(f"{len(rows) - len(lacking)} of {len(rows)} genomes embedded: {len(lacking)} lack an .npy "
+                           f"for depths {depths} or a __meta.json on the volume (e.g. {lacking[:3]}). "
+                           "The embed stage did not produce these; nothing was evaluated.")
     y = np.array([r["motility"] == "yes" for r in rows])
     groups = np.array([r["group"] for r in rows])
     bad, results, timing = [], [], {}
@@ -427,29 +455,65 @@ def _existing(subdir: str) -> set[str]:
         return set()
 
 
+MAX_LEADING_FAILURES = 3  # this many failures before ANY success means something systemic, not a bad genome
+
+
 def _run_embedding(accs: list[str], depths: list[int], batch_size: int, max_usd: float, save_windows: bool):
-    """Stream GPU results, print running spend, stop cleanly if the budget is hit. Returns (failures, spent_usd)."""
-    gpu_s, loads, failures, done = 0.0, {}, [], 0
+    """Embed `accs` on the GPUs, printing spend as it goes. Returns (failures, spent_usd).
+
+    Results come back in input order (`order_outputs=True`), so every result, including a raised
+    exception, is paired with its accession by position: a failure can never be anonymous.
+    `return_exceptions=True` stops one failing input from cancelling its siblings. The first failure
+    is printed in full the moment it arrives, before anything else can obscure it.
+
+    Two deliberate stops, each announced by name (never as a generic cancellation):
+      * BUDGET STOP: estimated spend exceeded `max_usd`.
+      * ABORT: the first MAX_LEADING_FAILURES results all failed. That is systemic (model load, image,
+        GPU), so continuing would only bill for identical failures. In-flight inputs are cancelled by
+        the local app exiting; that is this abort, not a fault.
+    """
+    gpu_s, loads, failures, ok_n, done, streak = 0.0, {}, [], 0, 0, 0
     t0 = time.time()
-    results = Embedder().embed.map(accs, order_outputs=False, return_exceptions=True,
+    print(f"embedding {len(accs)} genomes on up to {MAX_GPUS} x {GPU} (guard: --max-usd {max_usd})", flush=True)
+    results = Embedder().embed.map(accs, return_exceptions=True,
                                    kwargs={"depths": depths, "batch_size": batch_size, "save_windows": save_windows})
-    for res in results:
-        done += 1
-        if isinstance(res, Exception):
-            failures.append({"acc": "?", "error": f"{type(res).__name__}: {res}"})
-            continue
-        gpu_s += res.get("gpu_seconds", 0.0)
-        loads[res["task_id"]] = res["load_s"]
-        if not res["ok"]:
-            failures.append(res)
-        spent = core.usd(gpu_s + sum(loads.values()))
-        if done % 10 == 0 or done == len(accs):
-            print(f"  [{done}/{len(accs)}] {time.time() - t0:6.0f}s wall | GPU spend ~${spent:5.2f} "
-                  f"({len(loads)} containers) | failures {len(failures)}", flush=True)
-        if spent > max_usd:
-            print(f"\nBUDGET STOP: estimated GPU spend ${spent:.2f} exceeded --max-usd {max_usd}. "
-                  "Checkpoints are kept; re-run the same command to resume.")
-            raise SystemExit(2)
+    try:
+        for acc, res in zip(accs, results):
+            done += 1
+            if isinstance(res, BaseException):  # infrastructure failure: the call never returned a result
+                err = "".join(traceback.format_exception(type(res), res, res.__traceback__)).strip()
+                res = {"acc": acc, "ok": False, "error": f"{type(res).__name__}: {res}\n(local side)\n{err}"}
+            else:
+                gpu_s += res.get("gpu_seconds", 0.0)
+                if "task_id" in res:
+                    loads[res["task_id"]] = res.get("load_s", 0.0)
+            spent = core.usd(gpu_s + sum(loads.values()))
+            if res["ok"]:
+                ok_n += 1
+                streak = 0
+            else:
+                streak += 1
+                failures.append({"acc": acc, "error": res.get("error", "unknown")})
+                if len(failures) == 1:
+                    print(f"\nFIRST FAILURE, {acc}:\n{res.get('error', 'unknown')}\n", flush=True)
+                else:
+                    print(f"  FAILED {acc}: {str(res.get('error', '')).strip().splitlines()[-1][:200]}", flush=True)
+            if done % 5 == 0 or done == len(accs) or not res["ok"]:
+                print(f"  [{done}/{len(accs)}] {time.time() - t0:5.0f}s | ok {ok_n} failed {len(failures)} | "
+                      f"GPU spend ~${spent:5.2f} on {len(loads)} containers", flush=True)
+            if ok_n == 0 and streak >= MAX_LEADING_FAILURES:
+                print(f"\nABORT (not a Modal cancellation): the first {streak} inputs all failed and none succeeded, "
+                      "so this is systemic and further inputs would bill for the same failure. Cause is in the "
+                      "FIRST FAILURE above and in the container log lines starting '[enter]' / '[embed]'.")
+                raise SystemExit(3)
+            if spent > max_usd:
+                print(f"\nBUDGET STOP: estimated GPU spend ${spent:.2f} exceeded --max-usd {max_usd} after "
+                      f"{done}/{len(accs)} genomes. In-flight calls are cancelled by this stop. Checkpoints are kept; "
+                      "re-run the same command to resume.")
+                raise SystemExit(2)
+    finally:
+        print(f"embedding stage: {ok_n} ok, {len(failures)} failed of {done} returned "
+              f"({len(accs) - done} not returned), GPU spend ~${core.usd(gpu_s + sum(loads.values())):.2f}", flush=True)
     return failures, core.usd(gpu_s + sum(loads.values()))
 
 
@@ -516,13 +580,20 @@ def sweep(panel: str = PANEL, n_genomes: int = 200, depths: str = "10,25,50,100"
     ok, bad = _prepare(needed, skip_checks) if needed else (set(), [])
     todo = [r["ncbi_assembly_accession"] for r in needed if r["ncbi_assembly_accession"] in ok]
     fails, spent = _run_embedding(todo, ds, batch_size, max_usd, save_windows=True) if todo else ([], 0.0)
-    for f in fails:
-        print("EMBED FAILED:", f.get("acc"), f.get("error"))
-
-    failed = {f.get("acc") for f in fails} | {b["acc"] for b in bad}
+    # Positive confirmation, not exclusion: evaluate only genomes whose files are on the volume.
+    have = _existing("embeddings")
     final = [{"acc": r["ncbi_assembly_accession"], "motility": r["motility"], "group": r["group"]}
-             for r in sample if r["ncbi_assembly_accession"] not in failed]
-    print(f"\nevaluating {len(final)} genomes...")
+             for r in sample
+             if f"{r['ncbi_assembly_accession']}__meta.json" in have
+             and all(f"{r['ncbi_assembly_accession']}__n{n}.npy" in have for n in ds)]
+    print(f"\n{len(final)} of {len(sample)} genomes embedded on the volume "
+          f"({len(fails)} embed failures, {len(bad)} download failures)")
+    if len(final) < 0.9 * len(sample):
+        for f in fails[:5]:
+            print(f"  {f['acc']}: {str(f['error']).strip().splitlines()[-1][:200]}")
+        raise SystemExit(f"Refusing to evaluate: only {len(final)} of {len(sample)} genomes are embedded "
+                         "(need >= 90%). Fix the failures above and re-run the same command; checkpoints are kept.")
+    print(f"evaluating {len(final)} genomes...")
     ev = evaluate_sweep.remote(final, ds, n_splits)
     if ev["invalid_depths"]:
         raise SystemExit(f"invalid embeddings at depths {ev['invalid_depths']}")

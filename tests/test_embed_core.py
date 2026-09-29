@@ -380,3 +380,99 @@ def test_plain_call_reraises_foreign_exceptions_as_builtin_runtimeerror():
         evo2_modal._plain_call(boom)
     assert type(ei.value) is RuntimeError
     assert evo2_modal._plain_call(lambda: {"v": 1}) == {"v": 1}
+
+
+# --- failure visibility (these reproduce the two reported bugs against a stand-in for Modal) ----------
+class _FakeEmbed:
+    """Stands in for `Embedder().embed.map(...)`: returns one outcome per input, in input order."""
+
+    def __init__(self, outcomes):
+        self.outcomes = outcomes
+
+    def map(self, accs, **kw):
+        assert kw.get("return_exceptions") is True  # one failure must not cancel its siblings
+        assert kw.get("order_outputs", True) is True  # ordered, so results can be paired with accessions
+        return iter(self.outcomes[: len(accs)])
+
+
+def _patch_embedder(monkeypatch, outcomes):
+    evo2_modal = pytest.importorskip("modal") and __import__("src.evo2_modal", fromlist=["x"])
+    fake = _FakeEmbed(outcomes)
+    monkeypatch.setattr(evo2_modal, "Embedder", lambda: type("E", (), {"embed": fake})())
+    return evo2_modal
+
+
+def _ok(acc, s=80.0):
+    return {"acc": acc, "ok": True, "status": "embedded", "gpu_seconds": s, "task_id": "t1", "load_s": 100.0}
+
+
+def test_failures_are_always_paired_with_their_accession_and_first_is_printed_in_full(monkeypatch, capsys):
+    accs = ["GCF_1.1", "GCF_2.1", "GCF_3.1", "GCF_4.1"]
+    boom = RuntimeError("remote function failed:\nTraceback (most recent call last):\n  File x.py\nCudaError: out of memory")
+    m = _patch_embedder(monkeypatch, [_ok(accs[0]), boom, _ok(accs[2]),
+                                      {"acc": accs[3], "ok": False, "error": "Traceback...\nValueError: no contig"}])
+    fails, spent = m._run_embedding(accs, [10], 1, max_usd=50, save_windows=True)
+    assert [f["acc"] for f in fails] == ["GCF_2.1", "GCF_4.1"]  # never "?"
+    out = capsys.readouterr().out
+    assert "FIRST FAILURE, GCF_2.1" in out and "CudaError: out of memory" in out  # real traceback, verbatim
+    assert "cancelled by user" not in out and spent > 0
+
+
+def test_systemic_failure_aborts_by_name_after_three_leading_failures(monkeypatch, capsys):
+    accs = [f"GCF_{i}.1" for i in range(8)]
+    m = _patch_embedder(monkeypatch, [RuntimeError("model failed to load: OSError bad checkpoint")] * 8)
+    with pytest.raises(SystemExit) as e:
+        m._run_embedding(accs, [10], 1, max_usd=50, save_windows=True)
+    assert e.value.code == 3
+    out = capsys.readouterr().out
+    assert "ABORT (not a Modal cancellation)" in out and "FIRST FAILURE, GCF_0.1" in out
+    assert "bad checkpoint" in out and "embedding stage: 0 ok, 3 failed of 3 returned" in out
+
+
+def test_one_bad_genome_among_successes_does_not_abort(monkeypatch):
+    accs = [f"GCF_{i}.1" for i in range(6)]
+    outcomes = [_ok(a) for a in accs]
+    outcomes[1] = {"acc": accs[1], "ok": False, "error": "ValueError: no contig >= 8192"}
+    outcomes[2] = outcomes[3] = outcomes[4] = {"acc": "x", "ok": False, "error": "ValueError: short"}
+    m = _patch_embedder(monkeypatch, outcomes)
+    fails, _ = m._run_embedding(accs, [10], 1, max_usd=50, save_windows=True)  # successes came first: no abort
+    assert len(fails) == 4
+
+
+def test_budget_stop_is_announced_explicitly_and_spend_is_printed(monkeypatch, capsys):
+    accs = [f"GCF_{i}.1" for i in range(10)]
+    m = _patch_embedder(monkeypatch, [_ok(a, s=1500.0) for a in accs])  # ~$0.87 per genome
+    with pytest.raises(SystemExit) as e:
+        m._run_embedding(accs, [10], 1, max_usd=2.0, save_windows=True)
+    assert e.value.code == 2
+    out = capsys.readouterr().out
+    assert "BUDGET STOP" in out and "--max-usd 2.0" in out and "GPU spend ~$" in out
+
+
+def test_evaluate_sweep_refuses_genomes_that_were_never_embedded(tmp_path, monkeypatch):
+    m = _patch_embedder(monkeypatch, [])
+    monkeypatch.setattr(m, "EMB_DIR", str(tmp_path))
+    monkeypatch.setattr(m, "out_vol", type("V", (), {"reload": staticmethod(lambda: None)})())
+    rows = [{"acc": f"GCF_{i}.1", "motility": "yes", "group": "g"} for i in range(3)]
+    with pytest.raises(RuntimeError, match=r"0 of 3 genomes embedded"):
+        m._evaluate_sweep(rows, [10, 25], 3)
+    # npy present but meta missing is still refused, with the right count
+    for r in rows[:2]:
+        for n in (10, 25):
+            (tmp_path / f"{r['acc']}__n{n}.npy").write_bytes(b"x")
+    (tmp_path / "GCF_0.1__meta.json").write_text("{}")
+    with pytest.raises(RuntimeError, match=r"1 of 3 genomes embedded"):
+        m._evaluate_sweep(rows, [10, 25], 3)
+    with pytest.raises(RuntimeError, match=r"0 of 0 genomes embedded"):
+        m._evaluate_sweep([], [10], 3)
+
+
+def test_plain_call_keeps_the_original_traceback():
+    m = _patch_embedder(pytest.MonkeyPatch(), [])
+
+    def deep():
+        raise ValueError("the real cause")
+
+    with pytest.raises(RuntimeError) as ei:
+        m._plain_call(deep)
+    assert "the real cause" in str(ei.value) and "in deep" in str(ei.value) and "Traceback" in str(ei.value)
