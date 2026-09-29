@@ -313,5 +313,36 @@ def project_hours(s_per_genome: float, n: int = N_PANEL) -> float:
     return s_per_genome * n / 3600
 
 
+def plain(obj):
+    """Reduce `obj` to builtin str/int/float/bool/None/dict/list, or raise TypeError.
+
+    Modal pickles every remote return value back to the local process, which has no torch or numpy.
+    A str subclass such as torch.__version__ (TorchVersion), a numpy scalar, or a torch dtype pickles
+    by reference to its defining module and fails to deserialize locally. Everything that leaves a
+    container goes through here, so a stray non-primitive fails inside the container with its path,
+    not as an opaque DeserializationError on the far side.
+    """
+    def walk(x, path):
+        if x is None or type(x) in (bool, int, float, str):
+            return x
+        if isinstance(x, bool):
+            return bool(x)
+        if isinstance(x, str):
+            return str(x)
+        if isinstance(x, int):
+            return int(x)
+        if isinstance(x, float):
+            return float(x)
+        if isinstance(x, dict):
+            return {walk(k, path + ".<key>"): walk(v, f"{path}[{k!r}]") for k, v in x.items()}
+        if isinstance(x, (list, tuple)):
+            return [walk(v, f"{path}[{i}]") for i, v in enumerate(x)]
+        if hasattr(x, "item") and type(x).__module__.split(".")[0] == "numpy":
+            return walk(x.item(), path)  # numpy scalar -> builtin
+        raise TypeError(f"non-primitive {type(x).__module__}.{type(x).__qualname__} at {path}: convert with str()/float() before returning")
+
+    return walk(obj, "return")
+
+
 def dump_json(obj, path: str | Path) -> None:
     Path(path).write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n")

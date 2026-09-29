@@ -96,9 +96,25 @@ UA = "bacterialmorphospace/0.1 (research; genome download)"
 
 # ---------------------------------------------------------------------------
 # Remote functions
+#
+# Everything that leaves a container is pickled back to the local process, which has no torch,
+# numpy or huggingface_hub. So each remote function is a thin wrapper that returns
+# `core.plain(...)` (builtin str/int/float/bool/None/dict/list only) and re-raises any failure as a
+# builtin RuntimeError carrying the original type and message; the real work is in the `_impl`.
 # ---------------------------------------------------------------------------
+def _plain_call(fn, *args, **kwargs):
+    try:
+        return core.plain(fn(*args, **kwargs))
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(f"{type(e).__name__}: {e}") from None
+
+
 @app.function(image=gpu_image, gpu=GPU, timeout=900)
 def verify_env() -> dict:
+    return _plain_call(_verify_env)
+
+
+def _verify_env() -> dict:
     """Runs on the GPU image: TE absent, HAS_TE False, flash-attn importable, right torch/ABI."""
     import importlib.metadata as md
     import importlib.util
@@ -116,15 +132,19 @@ def verify_env() -> dict:
     from evo2 import Evo2  # noqa: F401  (import only; loading happens in Embedder)
 
     return {
-        "torch": torch.__version__, "cuda": torch.version.cuda, "cxx11_abi": bool(torch._C._GLIBCXX_USE_CXX11_ABI),
-        "flash_attn": flash_attn.__version__, "gpu": torch.cuda.get_device_name(0),
-        "transformer_engine_dists": te, "HAS_TE": layers.HAS_TE,
+        "torch": str(torch.__version__), "cuda": str(torch.version.cuda),  # TorchVersion is a str subclass that pickles via torch "cxx11_abi": bool(torch._C._GLIBCXX_USE_CXX11_ABI),
+        "flash_attn": str(flash_attn.__version__), "gpu": str(torch.cuda.get_device_name(0)),
+        "transformer_engine_dists": [str(t) for t in te], "HAS_TE": bool(layers.HAS_TE),
         "evo2": md.version("evo2"), "vtx": md.version("vtx"),
     }
 
 
 @app.function(image=cpu_image, volumes={HF_DIR: hf_vol}, timeout=3600, cpu=2, memory=8192)
 def prime_weights() -> dict:
+    return _plain_call(_prime_weights)
+
+
+def _prime_weights() -> dict:
     """Put the merged evo2_7b_base.pt on the volume from a CPU container, so no GPU second is spent on it.
 
     Mirrors evo2.Evo2.load_evo2_model exactly (same repo, same shard names, same merged path), so
@@ -218,6 +238,10 @@ def _fetch_genome(acc: str, dest: str) -> int:
 @app.function(image=cpu_image, volumes={OUT_DIR: out_vol}, timeout=900, max_containers=8,
               retries=modal.Retries(max_retries=2, initial_delay=10.0))
 def download_genome(acc: str, alt_acc: str = "") -> dict:
+    return _plain_call(_download_genome, acc, alt_acc)
+
+
+def _download_genome(acc: str, alt_acc: str = "") -> dict:
     """NCBI download with verification (see core.verify_download). Tries the GenBank accession if RefSeq fails."""
     os.makedirs(GENOME_DIR, exist_ok=True)
     dest = f"{GENOME_DIR}/{acc}.fna.gz"
@@ -252,9 +276,12 @@ class Embedder:
     @modal.enter()
     def load(self):
         t0 = time.perf_counter()
-        from evo2 import Evo2
+        try:
+            from evo2 import Evo2
 
-        self.model = Evo2(core.MODEL_NAME)
+            self.model = Evo2(core.MODEL_NAME)
+        except Exception as e:  # noqa: BLE001  torch/CUDA exception classes do not unpickle locally
+            raise RuntimeError(f"model load failed: {type(e).__name__}: {e}") from None
         self.load_s = time.perf_counter() - t0
         self.task_id = os.environ.get("MODAL_TASK_ID", "local")
 
@@ -287,6 +314,9 @@ class Embedder:
 
     @modal.method()
     def embed(self, acc: str, depths: list[int], batch_size: int = 1, save_windows: bool = True) -> dict:
+        return _plain_call(self._embed, acc, depths, batch_size, save_windows)
+
+    def _embed(self, acc: str, depths: list[int], batch_size: int = 1, save_windows: bool = True) -> dict:
         import json
 
         import numpy as np
@@ -340,6 +370,10 @@ class Embedder:
 
 @app.function(image=cpu_image, volumes={OUT_DIR: out_vol}, timeout=1800, cpu=2, memory=8192)
 def evaluate_sweep(rows: list[dict], depths: list[int], n_splits: int) -> dict:
+    return _plain_call(_evaluate_sweep, rows, depths, n_splits)
+
+
+def _evaluate_sweep(rows: list[dict], depths: list[int], n_splits: int) -> dict:
     """Per-depth GroupKFold AUC on `motility`, plus timings from the per-genome meta files."""
     import json
 

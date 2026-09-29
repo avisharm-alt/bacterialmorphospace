@@ -278,3 +278,105 @@ def test_select_depth_one_se_rule():
     ]
     sel = core.select_depth(res)  # SE = 0.025; threshold 0.845 -> 50 is the smallest that qualifies
     assert sel["best_depth"] == 100 and sel["selected_depth"] == 50 and math.isclose(sel["one_se"], 0.025)
+
+
+# --- remote return values must be plain Python (the local process has no torch/numpy) -----------
+def _pickle_globals(obj):
+    """Module-qualified names a pickle of `obj` would need at load time (empty for builtin primitives)."""
+    import pickle
+    import pickletools
+
+    names, strings = [], []
+    for op, arg, _ in pickletools.genops(pickle.dumps(obj)):
+        if op.name in ("GLOBAL", "INST"):
+            names.append(arg)
+        elif op.name in ("SHORT_BINUNICODE", "BINUNICODE", "UNICODE"):
+            strings.append(arg)
+        elif op.name == "STACK_GLOBAL":
+            names.append(tuple(strings[-2:]))
+    return names
+
+
+def test_plain_turns_str_subclass_from_torch_into_builtin_str(monkeypatch):
+    import sys
+    import types
+
+    fake_torch = types.ModuleType("fake_torch_version")  # stands in for the module the local side lacks
+    fake_torch.TorchVersion = type("TorchVersion", (str,), {"__module__": "fake_torch_version"})
+    monkeypatch.setitem(sys.modules, "fake_torch_version", fake_torch)
+    v = fake_torch.TorchVersion("2.8.0+cu128")  # torch.__version__ is a str subclass exactly like this
+    assert _pickle_globals(v)  # the trap: it pickles by reference to the (absent) module
+    out = core.plain({"torch": v, "nested": [v, {"k": v}]})
+    assert out == {"torch": "2.8.0+cu128", "nested": ["2.8.0+cu128", {"k": "2.8.0+cu128"}]}
+    assert _pickle_globals(out) == []
+    assert type(out["torch"]) is str
+
+
+def test_plain_converts_numpy_scalars_and_int_float_subclasses():
+    np = pytest.importorskip("numpy")
+    out = core.plain({"a": np.float64(1.5), "b": np.int64(3), "c": np.bool_(True), "d": (1, 2.0, "x", None)})
+    assert out == {"a": 1.5, "b": 3, "c": True, "d": [1, 2.0, "x", None]}
+    assert all(type(v) in (float, int, bool, list) for v in out.values())
+    assert _pickle_globals(out) == []
+
+
+def test_plain_rejects_non_primitives_with_the_path():
+    class Device:
+        pass
+
+    Device.__module__ = "torch"
+    with pytest.raises(TypeError, match=r"return\['gpu'\]\[1\]"):
+        core.plain({"gpu": ["ok", Device()]})
+    with pytest.raises(TypeError):
+        core.plain({"arr": object()})
+
+
+def test_evaluate_depth_result_is_plain():
+    pytest.importorskip("numpy")
+    pytest.importorskip("sklearn")
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    groups = np.array([f"g{i % 4}" for i in range(80)])
+    res = core.evaluate_depth(rng.normal(size=(80, 6)), rng.integers(0, 2, 80), groups, 4)
+    assert core.plain(res) == res and _pickle_globals(core.plain(res)) == []
+
+
+def test_every_remote_function_returns_through_plain_call():
+    """Static audit of src/evo2_modal.py: no @app.function / @modal.method may return a raw value."""
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse((Path(__file__).parent.parent / "src" / "evo2_modal.py").read_text())
+    remote = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            for d in node.decorator_list:
+                target = d.func if isinstance(d, ast.Call) else d
+                if isinstance(target, ast.Attribute) and target.attr in ("function", "method"):
+                    remote.append(node)
+    assert {f.name for f in remote} >= {"verify_env", "prime_weights", "download_genome", "embed", "evaluate_sweep"}
+    for f in remote:
+        rets = [n for n in ast.walk(f) if isinstance(n, ast.Return)]
+        assert len(rets) == 1, f"{f.name} must have a single return"
+        call = rets[0].value
+        assert isinstance(call, ast.Call) and getattr(call.func, "id", None) == "_plain_call", (
+            f"{f.name} returns without going through _plain_call (raw values may not unpickle locally)")
+
+
+def test_plain_call_reraises_foreign_exceptions_as_builtin_runtimeerror():
+    pytest.importorskip("modal")
+    from src import evo2_modal
+
+    class HubError(Exception):
+        pass
+
+    HubError.__module__ = "huggingface_hub.errors"
+
+    def boom():
+        raise HubError("401 unauthorized")
+
+    with pytest.raises(RuntimeError, match="HubError: 401 unauthorized") as ei:
+        evo2_modal._plain_call(boom)
+    assert type(ei.value) is RuntimeError
+    assert evo2_modal._plain_call(lambda: {"v": 1}) == {"v": 1}
