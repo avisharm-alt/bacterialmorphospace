@@ -235,10 +235,15 @@ written atomically, so an interrupted run resumes where it stopped. Fetch result
 `md5checksums.txt` and decompress to FASTA. Nothing is inferred from an exit status. If the RefSeq accession is gone, the
 GenBank accession is tried.
 
-**Windows.** `n` windows of 8,192 bp, evenly spaced over the longest contig, mean-pooled within a window and then across
-windows. The sweep embeds one pool of `max(depths)` windows per genome and takes each smaller depth as an evenly
-spaced subset of it. That is 100 forward passes per genome instead of 185, and it makes the depths a paired
-comparison. A subset window sits within 0.5% of the contig length of where an independent `linspace(n)` would put it.
+**Windows.** `n` windows of 8,192 bp, drawn across **all** contigs of at least 8,192 bp, not only the longest. Sampling
+from the longest contig alone would embed one fragment of a draft assembly, and how fragmented an assembly is tracks how well
+studied the organism is, which can correlate with the traits. The usable contigs are laid end to end and `n` points are spaced
+evenly along that axis, so each contig gets windows in proportion to its length. Each window sits inside its own contig, and none
+spans a junction. Windows are mean-pooled within a window and then across windows. The sweep embeds one pool of `max(depths)`
+windows per genome and takes each smaller depth as an evenly spaced subset of it. That is 100 forward passes per genome instead
+of 185, and it makes the depths a paired comparison. A subset window sits within 0.5% of the usable length of where an
+independent draw would put it. Each genome's meta file records `sampling`, the windows, and contig statistics, and the sweep
+refuses to mix checkpoints from different sampling schemes.
 
 **Sweep.** About 200 genomes, stratified across GTDB phyla by cap-and-fill (phyla with <10 species in the panel are pooled
 into `other`). It reports `roc_auc` for `motility`
@@ -247,9 +252,12 @@ alongside s/genome and the projected hours and dollars for 2,580. Outputs: `repo
 `evo2_sweep_genomes.tsv` and `evo2_sweep_selected_depth.json` (smallest depth within one SE of the best mean AUC;
 `embed_all` reads it when `--n-windows` is omitted). Both entry points take `--max-usd` and stop cleanly, with checkpoints
 kept, when the running estimate exceeds it. Caveats to read the result with:
-- Many panel genomes are drafts. In a 40-genome check the median longest contig was 782 kb, so at depth 100 about half of
-  the genomes must overlap their windows (`frac_overlapping` reports this), and depth gains partly saturate.
+- `frac_overlapping` is the share of genomes whose total usable sequence (all contigs >= 8,192 bp) is shorter than `n`
+  windows, so their windows must overlap. On the 100-genome default sample it is 0% at every depth (median 3,975 kb usable
+  across 15 contigs). Drawing from the longest contig alone would have given 46% at depth 100.
 - Some folds can be single-class; those are skipped and counted in `folds_scored`.
+- A few windows contain scaffold gaps (7 of 10,000 windows exceed 5% ambiguous bases in the default sample). They are
+  embedded as they are; the worst window per genome is in its meta file.
 
 ## Layout
 

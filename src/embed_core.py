@@ -4,12 +4,20 @@ Everything the Modal app (`src/evo2_modal.py`) needs that can be tested without 
 NCBI path handling, download verification, window placement, stratified sampling, cost
 estimation and the phylum-grouped classifier evaluation.
 
-Window design. For a run at depth `n` the windows are evenly spaced over the longest contig.
-The sweep embeds ONE pool of `max(depths)` evenly spaced windows per genome and derives every
-smaller depth as an evenly spaced subset of that pool (`subset_indices`). That costs
-`max(depths)` forward passes per genome instead of `sum(depths)`, and it makes the depth
-comparison paired. A subset window sits within half a pool step of where an independent
-linspace(n) window would be (0.5% of the contig length for a 100-window pool).
+Window design. Windows are drawn from ALL contigs of at least one window (8,192 bp), not from
+the longest contig alone: a draft assembly's longest contig is one fragment, and how fragmented
+an assembly is tracks how well studied the organism is, which can correlate with the traits.
+The usable contigs are laid end to end on one axis of length T (`usable_len`) and `n` points are
+spaced evenly along it (systematic sampling), so each contig receives windows in proportion to its
+length. Each window is placed on the contig that owns its point, clamped inside it, so no window
+spans a junction. Contigs shorter than one window are dropped, and only so much sequence is
+"usable": `frac_overlapping` compares n*8192 against T.
+
+The sweep embeds ONE pool of `max(depths)` windows per genome and derives every smaller depth as
+an evenly spaced subset of that pool (`subset_indices`). That costs `max(depths)` forward passes
+per genome instead of `sum(depths)`, and it makes the depth comparison paired. A subset window
+sits within half a pool step of where an independent n-window draw would be (0.5% of T for a
+100-window pool).
 """
 
 from __future__ import annotations
@@ -30,6 +38,8 @@ LAYER = "blocks.28.mlp.l3"
 EMB_DIM = 4096
 WINDOW = 8192
 DEFAULT_DEPTHS = (10, 25, 50, 100)
+# Recorded in every meta file; the evaluation refuses to mix checkpoints from different sampling schemes.
+SAMPLING = "all_contigs_systematic_v1"
 
 # Measured on A100-40GB (Colab), used only for pre-flight estimates.
 S_PER_WINDOW = 0.77
@@ -111,46 +121,71 @@ def verify_download(path: str | Path, expected_bytes: int | None = None,
         raise IOError(f"{p.name}: does not decompress to FASTA")
 
 
-def longest_contig(fasta_gz: str | Path) -> tuple[str, str]:
-    """(header id, uppercase sequence) of the longest record in a gzipped FASTA."""
-    best_id, best_len, best_parts = "", -1, []
-    cur_id, cur_parts, cur_len = "", [], 0
+def read_contigs(fasta_gz: str | Path, min_len: int = WINDOW) -> tuple[list[tuple[str, str]], int, int]:
+    """(usable contigs, total bp, number of contigs) from a gzipped FASTA.
+
+    Usable contigs are those of at least `min_len` bp, as (header id, uppercase sequence) in file order.
+    """
+    usable, total, n_contigs = [], 0, 0
+    cur_id, parts, cur_len = None, [], 0
 
     def close():
-        nonlocal best_id, best_len, best_parts
-        if cur_len > best_len:
-            best_id, best_len, best_parts = cur_id, cur_len, cur_parts
+        nonlocal total, n_contigs
+        total += cur_len
+        n_contigs += 1
+        if cur_len >= min_len:
+            usable.append((cur_id, "".join(parts).upper()))
 
     with gzip.open(fasta_gz, "rt") as f:
         for line in f:
             if line.startswith(">"):
-                if cur_id:
+                if cur_id is not None:
                     close()
-                cur_id, cur_parts, cur_len = line[1:].split()[0], [], 0
+                cur_id, parts, cur_len = (line[1:].split() or [""])[0], [], 0
             else:
                 s = line.strip()
-                cur_parts.append(s)
+                parts.append(s)
                 cur_len += len(s)
-        if cur_id:
+        if cur_id is not None:
             close()
-    if best_len < 0:
+    if n_contigs == 0:
         raise ValueError(f"no FASTA records in {fasta_gz}")
-    return best_id, "".join(best_parts).upper()
+    return usable, total, n_contigs
 
 
 # ---------------------------------------------------------------------------
 # Windows
 # ---------------------------------------------------------------------------
-def window_starts(contig_len: int, n: int, window: int = WINDOW) -> list[int]:
-    """n evenly spaced window starts covering the whole contig, first at 0 and last flush with the end."""
+def pool_windows(contig_lens: list[int], n: int, window: int = WINDOW) -> list[tuple[int, int]]:
+    """n windows as (contig index, start) drawn across ALL contigs of at least `window` bp.
+
+    Usable contigs are laid end to end (length T) and n points are spaced evenly from 0 to T-1
+    (systematic sampling), so a contig gets windows in proportion to its length. The window for a
+    point is centred on it and clamped inside its own contig, so no window crosses a junction.
+    The first and last points are at the two ends of the axis, which is what makes an evenly
+    spaced subset of a larger pool line up with an independent smaller draw (`subset_indices`).
+    Contig indices refer to the input list; contigs shorter than `window` are skipped.
+    """
     if n < 1:
         raise ValueError("n must be >= 1")
-    if contig_len < window:
-        raise ValueError(f"longest contig is {contig_len} bp, shorter than one {window} bp window")
-    span = contig_len - window
-    if n == 1:
-        return [span // 2]
-    return [int(i * span / (n - 1) + 0.5) for i in range(n)]
+    usable = [(i, L) for i, L in enumerate(contig_lens) if L >= window]
+    if not usable:
+        raise ValueError(f"no contig of at least {window} bp (longest is {max(contig_lens, default=0)} bp)")
+    total = sum(L for _, L in usable)
+    out, k, offset = [], 0, 0  # k indexes `usable`; offset is where usable[k] starts on the axis
+    for j in range(n):
+        p = total / 2 if n == 1 else j * (total - 1) / (n - 1)
+        while k < len(usable) - 1 and p >= offset + usable[k][1]:
+            offset += usable[k][1]
+            k += 1
+        idx, L = usable[k]
+        out.append((idx, int(min(max(p - offset - window / 2, 0), L - window))))
+    return out
+
+
+def usable_len(contig_lens: list[int], window: int = WINDOW) -> int:
+    """Total bp on contigs that can host a window: the sequence a depth is actually drawn from."""
+    return sum(L for L in contig_lens if L >= window)
 
 
 def subset_indices(pool_n: int, n: int) -> list[int]:

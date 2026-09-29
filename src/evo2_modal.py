@@ -258,15 +258,16 @@ class Embedder:
         self.load_s = time.perf_counter() - t0
         self.task_id = os.environ.get("MODAL_TASK_ID", "local")
 
-    def _embed_windows(self, seq: str, starts: list[int], batch_size: int):
+    def _embed_windows(self, seqs: list[str], windows: list[tuple[int, int]], batch_size: int):
         import numpy as np
         import torch
 
         tok = self.model.tokenizer
         vecs, times = [], []
-        for i in range(0, len(starts), batch_size):
-            chunk = starts[i:i + batch_size]
-            ids = torch.tensor([tok.tokenize(seq[s:s + core.WINDOW]) for s in chunk], dtype=torch.int).to("cuda:0")
+        for i in range(0, len(windows), batch_size):
+            chunk = windows[i:i + batch_size]
+            ids = torch.tensor([tok.tokenize(seqs[c][s:s + core.WINDOW]) for c, s in chunk],
+                               dtype=torch.int).to("cuda:0")
             torch.cuda.synchronize()
             t = time.perf_counter()
             _, emb = self.model(ids, return_embeddings=True, layer_names=[core.LAYER])
@@ -302,27 +303,37 @@ class Embedder:
                 return {**base, "ok": True, "status": "skipped", "gpu_seconds": 0.0}
 
             status = "embedded"
-            if os.path.exists(win_path) and os.path.exists(meta_path) and np.load(win_path, mmap_mode="r").shape[0] == pool_n:
+            meta = json.loads(open(meta_path).read()) if os.path.exists(meta_path) else None
+            if (meta and meta.get("sampling") == core.SAMPLING and os.path.exists(win_path)
+                    and np.load(win_path, mmap_mode="r").shape[0] == pool_n):
                 pool = np.load(win_path)  # a pool from an earlier run: derive the missing depths for free
-                meta = json.loads(open(meta_path).read())
                 status = "derived"
             else:
-                _, seq = core.longest_contig(f"{GENOME_DIR}/{acc}.fna.gz")
-                starts = core.window_starts(len(seq), pool_n)
-                pool, w_times = self._embed_windows(seq, starts, batch_size)
-                non_acgt = [sum(c not in "ACGT" for c in seq[s:s + core.WINDOW]) / core.WINDOW for s in starts]
-                meta = {"acc": acc, "contig_len": len(seq), "pool_n": pool_n, "starts": starts,
-                        "window_times": w_times, "max_non_acgt_frac": max(non_acgt), "batch_size": batch_size}
+                # windows are drawn across ALL contigs >= one window, in proportion to contig length
+                contigs, total_len, n_contigs = core.read_contigs(f"{GENOME_DIR}/{acc}.fna.gz")
+                lens = [len(s) for _, s in contigs]
+                windows = core.pool_windows(lens, pool_n)
+                seqs = [s for _, s in contigs]
+                pool, w_times = self._embed_windows(seqs, windows, batch_size)
+                non_acgt = [sum(ch not in "ACGT" for ch in seqs[c][s:s + core.WINDOW]) / core.WINDOW for c, s in windows]
+                per_contig = [sum(1 for c, _ in windows if c == i) for i in range(len(seqs))]
+                meta = {"acc": acc, "sampling": core.SAMPLING, "pool_n": pool_n, "batch_size": batch_size,
+                        "total_len": total_len, "n_contigs": n_contigs, "n_contigs_used": len(contigs),
+                        "usable_len": core.usable_len(lens), "longest_contig": max(lens),
+                        "windows": [[contigs[c][0], s] for c, s in windows], "windows_per_contig": per_contig,
+                        "window_times": w_times, "max_non_acgt_frac": max(non_acgt)}
                 if save_windows:
                     _save_npy(win_path, pool.astype(np.float32))
-                    with open(meta_path, "w") as f:
-                        json.dump(meta, f)
+                with open(meta_path + ".tmp", "w") as f:
+                    json.dump(meta, f)
+                os.replace(meta_path + ".tmp", meta_path)
             for n in missing:
                 idx = core.subset_indices(pool_n, n)
                 _save_npy(npy[n], pool[idx].mean(axis=0).astype(np.float32))
             out_vol.commit()
             return {**base, "ok": True, "status": status, "gpu_seconds": time.perf_counter() - t_call,
-                    "contig_len": meta["contig_len"], "max_non_acgt_frac": meta["max_non_acgt_frac"]}
+                    "usable_len": meta["usable_len"], "n_contigs_used": meta["n_contigs_used"],
+                    "max_non_acgt_frac": meta["max_non_acgt_frac"]}
         except Exception as e:  # noqa: BLE001  deterministic failures are reported, not retried
             return {**base, "ok": False, "error": f"{type(e).__name__}: {e}", "gpu_seconds": time.perf_counter() - t_call}
 
@@ -339,6 +350,10 @@ def evaluate_sweep(rows: list[dict], depths: list[int], n_splits: int) -> dict:
     groups = np.array([r["group"] for r in rows])
     bad, results, timing = [], [], {}
     metas = {r["acc"]: json.load(open(f"{EMB_DIR}/{r['acc']}__meta.json")) for r in rows}
+    stale = [a for a, m in metas.items() if m.get("sampling") != core.SAMPLING or m["pool_n"] != max(depths)]
+    if stale:
+        raise RuntimeError(f"{len(stale)} genomes were embedded with a different sampling scheme or pool size "
+                           f"(e.g. {stale[:3]}); delete their files from the volume and re-run")
     for n in depths:
         X = np.stack([np.load(f"{EMB_DIR}/{r['acc']}__n{n}.npy") for r in rows])
         if X.shape[1] != core.EMB_DIM or not np.isfinite(X).all():
@@ -346,13 +361,17 @@ def evaluate_sweep(rows: list[dict], depths: list[int], n_splits: int) -> dict:
         res = core.evaluate_depth(X, y, groups, n_splits)
         secs = [core.depth_seconds(m["window_times"], m["pool_n"], n) for m in metas.values()]
         s_gen = float(np.mean(secs))
-        # windows must overlap when the longest contig is shorter than n non-overlapping windows
-        overlap = float(np.mean([m["contig_len"] < n * core.WINDOW for m in metas.values()]))
+        # windows must overlap when ALL usable sequence (contigs >= one window) is shorter than n windows
+        overlap = float(np.mean([m["usable_len"] < n * core.WINDOW for m in metas.values()]))
         results.append({"depth": n, "n_genomes": len(rows), **res, "frac_overlapping": overlap, "s_per_genome": s_gen,
                         "hours_2580": core.project_hours(s_gen), "usd_2580": core.usd(s_gen * core.N_PANEL)})
-    ov = [m["max_non_acgt_frac"] for m in metas.values()]
+    ms = list(metas.values())
     return {"results": results, "invalid_depths": bad, "n_positive": int(y.sum()), "n_groups": int(len(set(groups))),
-            "max_non_acgt_frac": float(max(ov)), "mean_contig_len": float(np.mean([m["contig_len"] for m in metas.values()]))}
+            "max_non_acgt_frac": float(max(m["max_non_acgt_frac"] for m in ms)),
+            "median_usable_kb": float(np.median([m["usable_len"] for m in ms]) / 1e3),
+            "median_longest_contig_kb": float(np.median([m["longest_contig"] for m in ms]) / 1e3),
+            "median_contigs_used": float(np.median([m["n_contigs_used"] for m in ms])),
+            "median_frac_of_genome_usable": float(np.median([m["usable_len"] / m["total_len"] for m in ms]))}
 
 
 # ---------------------------------------------------------------------------
@@ -479,14 +498,18 @@ def sweep(panel: str = PANEL, n_genomes: int = 200, depths: str = "10,25,50,100"
             "s_per_genome", "hours_2580", "usd_2580"]
     _write_tsv(f"{reports}/tables/evo2_sampling_depth_sweep.tsv", ev["results"], cols)
     _write_tsv(f"{reports}/tables/evo2_sweep_genomes.tsv", final, ["acc", "group", "motility"])
-    core.dump_json({**sel, "results": ev["results"], "n_genomes": len(final), "seed": seed, "n_splits": n_splits},
+    core.dump_json({**sel, "results": ev["results"], "n_genomes": len(final), "seed": seed, "n_splits": n_splits,
+                    "sampling": core.SAMPLING, "sample_stats": {k: v for k, v in ev.items() if k != "results"}},
                    SELECTED_DEPTH_JSON.replace("reports", reports, 1))
 
     print(f"\n{'depth':>6} {'AUC':>15} {'folds':>6} {'overlap':>8} {'s/genome':>9} {'h for 2,580':>12} {'$ for 2,580':>12}")
     for r in ev["results"]:
         print(f"{r['depth']:>6} {r['auc_mean']:>8.3f} ± {r['auc_std']:.3f} {r['folds_scored']:>3}/{r['folds_total']} "
               f"{r['frac_overlapping']:>7.0%} {r['s_per_genome']:>9.1f} {r['hours_2580']:>12.1f} {r['usd_2580']:>12.0f}")
-    print("overlap = share of genomes whose longest contig is shorter than n non-overlapping windows")
+    print("overlap = share of genomes whose total usable sequence (all contigs >= 8,192 bp) is shorter than n windows")
+    print(f"sampled genomes: median {ev['median_contigs_used']:.0f} usable contigs, median usable {ev['median_usable_kb']:.0f} kb "
+          f"(longest contig alone: {ev['median_longest_contig_kb']:.0f} kb), "
+          f"{ev['median_frac_of_genome_usable']:.1%} of each genome usable")
     print(f"\nselected depth (one-SE rule): {sel['selected_depth']}  (best mean AUC at {sel['best_depth']}, SE {sel['one_se']:.3f})")
     print(f"sweep GPU spend ~${spent:.2f} this invocation (Modal dashboard is authoritative)")
 

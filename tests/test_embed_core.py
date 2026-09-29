@@ -70,7 +70,7 @@ def test_verify_rejects_truncated_gzip_even_without_announced_length(tmp_path):
     # header may still decode; the point is that some check rejects it or the read raises
     with pytest.raises((IOError, EOFError)):
         core.verify_download(p)
-        core.longest_contig(p)
+        core.read_contigs(p)
 
 
 def test_verify_rejects_md5_mismatch_and_non_fasta(tmp_path):
@@ -84,26 +84,82 @@ def test_verify_rejects_md5_mismatch_and_non_fasta(tmp_path):
         core.verify_download(q)
 
 
-def test_longest_contig(tmp_path):
+def test_read_contigs_keeps_only_usable_in_file_order(tmp_path):
     p = tmp_path / "m.fna.gz"
     with gzip.open(p, "wt") as f:
-        f.write(">short desc\nACGT\n>long other\nacgtacgt\nAC\n>mid\nAAAAAA\n")
-    cid, seq = core.longest_contig(p)
-    assert (cid, seq) == ("long", "ACGTACGTAC")
+        f.write(">a desc\nacgtacgt\nAC\n>tiny\nAAAA\n>b\nCCCCCCCC\n")
+    usable, total, n = core.read_contigs(p, min_len=8)
+    assert usable == [("a", "ACGTACGTAC"), ("b", "CCCCCCCC")]  # uppercased, tiny dropped, file order kept
+    assert (total, n) == (10 + 4 + 8, 3)
 
 
-# --- windows -------------------------------------------------------------------------------
-def test_window_starts_even_and_in_bounds():
-    s = core.window_starts(100_000, 10)
-    assert s[0] == 0 and s[-1] == 100_000 - core.WINDOW and len(set(s)) == 10
-    gaps = [b - a for a, b in zip(s, s[1:])]
+def test_read_contigs_rejects_empty_fasta(tmp_path):
+    p = tmp_path / "e.fna.gz"
+    with gzip.open(p, "wt") as f:
+        f.write("")
+    with pytest.raises(ValueError, match="no FASTA"):
+        core.read_contigs(p)
+
+
+# --- windows across all contigs ---------------------------------------------------------------
+W = core.WINDOW
+
+
+def _axis_start(lens, window):
+    """Axis coordinate (usable contigs laid end to end) of a (contig, start) window."""
+    offs, acc = {}, 0
+    for i, L in enumerate(lens):
+        if L >= W:
+            offs[i] = acc
+            acc += L
+    return offs[window[0]] + window[1]
+
+
+def test_pool_windows_single_contig_is_even_and_in_bounds():
+    ws = core.pool_windows([100_000], 10)
+    starts = [s for _, s in ws]
+    assert all(c == 0 for c, _ in ws) and len(set(starts)) == 10
+    assert 0 <= min(starts) and max(starts) <= 100_000 - W
+    gaps = [b - a for a, b in zip(starts, starts[1:])][1:-1]  # end windows are clamped inside the contig
     assert max(gaps) - min(gaps) <= 1
-    assert core.window_starts(100_000, 1) == [(100_000 - core.WINDOW) // 2]
+    assert core.pool_windows([100_000], 1) == [(0, int(min(max(50_000 - W / 2, 0), 100_000 - W)))]
 
 
-def test_window_starts_rejects_short_contig():
-    with pytest.raises(ValueError, match="shorter"):
-        core.window_starts(core.WINDOW - 1, 5)
+def test_pool_windows_never_crosses_a_contig_boundary():
+    lens = [30_000, 9_000, 8_192, 500_000, 20_000]
+    for n in (1, 7, 50, 100):
+        for c, s in core.pool_windows(lens, n):
+            assert 0 <= s and s + W <= lens[c]
+
+
+def test_pool_windows_skips_contigs_shorter_than_a_window():
+    lens = [5_000, 200_000, 8_191, 100_000, 100]
+    used = {c for c, _ in core.pool_windows(lens, 100)}
+    assert used == {1, 3}
+
+
+def test_pool_windows_allocates_in_proportion_to_length():
+    lens = [800_000, 150_000, 50_000]
+    counts = [0, 0, 0]
+    for c, _ in core.pool_windows(lens, 100):
+        counts[c] += 1
+    assert counts == [80, 15, 5] or all(abs(a - b) <= 1 for a, b in zip(counts, [80, 15, 5]))
+
+
+def test_pool_windows_does_not_discard_the_rest_of_a_fragmented_draft():
+    """The bias being fixed: longest-contig-only sampling would put 0 of 100 windows on the other 20 contigs."""
+    lens = [1_000_000] + [50_000] * 20  # longest contig holds half of the usable sequence
+    on_other = sum(1 for c, _ in core.pool_windows(lens, 100) if c != 0)
+    assert 45 <= on_other <= 55
+
+
+def test_pool_windows_rejects_genome_with_no_usable_contig():
+    with pytest.raises(ValueError, match="no contig"):
+        core.pool_windows([W - 1, 100], 5)
+
+
+def test_usable_len_counts_only_contigs_that_can_host_a_window():
+    assert core.usable_len([W - 1, W, 2 * W, 10]) == 3 * W
 
 
 @pytest.mark.parametrize("n", [10, 25, 50, 100])
@@ -114,13 +170,23 @@ def test_subset_indices_distinct_span_and_evenly_spaced(n):
     assert max(gaps) - min(gaps) <= 1  # within one pool step of perfectly even
 
 
-def test_subset_windows_stay_within_half_a_pool_step_of_independent_linspace():
-    contig, n, pool = 3_000_000, 25, 100
-    pool_starts = core.window_starts(contig, pool)
-    sub = [pool_starts[i] for i in core.subset_indices(pool, n)]
-    ideal = core.window_starts(contig, n)
-    step = (contig - core.WINDOW) / (pool - 1)
+def test_subset_windows_stay_within_half_a_pool_step_of_an_independent_draw():
+    lens, n, pool = [3_000_000], 25, 100
+    pool_w = core.pool_windows(lens, pool)
+    sub = [_axis_start(lens, pool_w[i]) for i in core.subset_indices(pool, n)]
+    ideal = [_axis_start(lens, w) for w in core.pool_windows(lens, n)]
+    step = (lens[0] - 1) / (pool - 1)
     assert max(abs(a - b) for a, b in zip(sub, ideal)) <= step / 2 + 1
+
+
+def test_subset_keeps_per_contig_allocation_close_to_an_independent_draw():
+    lens = [700_000, 200_000, 60_000, 40_000]
+    pool_w = core.pool_windows(lens, 100)
+    for n in (10, 25, 50):
+        sub = [pool_w[i][0] for i in core.subset_indices(100, n)]
+        ind = [w[0] for w in core.pool_windows(lens, n)]
+        for c in range(len(lens)):
+            assert abs(sub.count(c) - ind.count(c)) <= 1
 
 
 def test_subset_indices_bounds():
