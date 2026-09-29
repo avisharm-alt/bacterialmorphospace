@@ -575,7 +575,7 @@ def build_report(cfg: Config) -> str:
     w("2. **§2 Global null.** Fewer cells are occupied than independent traits would fill.")
     w("3. **§3 Stratified nulls.** The shortfall shrinks as the null respects phylum, class, then order, and is not significant at order level.")
     w("4. **§4 Positive control.** The method flags a known constraint globally and attributes it to lineage.")
-    w("5. **§5 No novel constraints.** Nothing survives the order-level shuffle and a family-level check.")
+    w("5. **§5 No novel constraints.** No cell survives both the order-level shuffle and the family-level check.")
     w("6. **§6 Power.** The smallest constraint the order-level null could have detected.")
     w("7. **§7 Methods note.** Why dropping small strata from a stratified permutation test creates false positives.\n")
 
