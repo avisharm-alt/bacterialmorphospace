@@ -42,8 +42,8 @@ DEFAULT_DEPTHS = (10, 25, 50, 100)
 SAMPLING = "all_contigs_systematic_v1"
 
 # Measured on A100-40GB (Colab), used only for pre-flight estimates.
-S_PER_WINDOW = 0.77
-S_OVERHEAD_PER_GENOME = 2.0  # contig parse, tokenisation, volume commit
+S_PER_WINDOW = 0.82  # sweep-measured: 0.84 s/window at depth 10, 0.79 at 100 (Colab said 0.77)
+S_OVERHEAD_PER_GENOME = 1.0  # contig parse, tokenisation, volume commit (sweep spend implies < 1 s)
 S_LOAD_PER_CONTAINER = 120.0  # weights from the volume + scale-down idle
 USD_PER_GPU_HOUR = 2.10  # Modal A100-40GB list price (0.000583 USD/s); the dashboard is authoritative
 
@@ -541,52 +541,88 @@ def cosine_report(mu) -> dict:
     return {"raw": mean_offdiag_cos(mu), "centred": mean_offdiag_cos(centred), "centred_scaled": mean_offdiag_cos(centred / s)}
 
 
-def _scale_from(mu):
+def _group_idx(groups, g):
     import numpy as np
 
-    s = np.asarray(mu, dtype=np.float64).std(0, ddof=1)
+    if groups is None:
+        return [np.arange(g)]
+    groups = np.asarray(groups)
+    return [np.flatnonzero(groups == u) for u in sorted(set(groups))]
+
+
+def _center(x, gi, axis):
+    """Subtract each group's mean along the genome axis. One group = centre across all genomes."""
+    import numpy as np
+
+    out = np.array(x, copy=True)
+    for idx in gi:
+        sl = [slice(None)] * x.ndim
+        sl[axis] = idx
+        out[tuple(sl)] = x[tuple(sl)] - x[tuple(sl)].mean(axis=axis, keepdims=True)
+    return out
+
+
+def _scale_from(mu, gi=None):
+    import numpy as np
+
+    mu = np.asarray(mu, dtype=np.float64)
+    gi = gi or [np.arange(len(mu))]
+    c = _center(mu, gi, 0)
+    s = np.sqrt((c ** 2).sum(0) / (len(mu) - len(gi)))
     s[s < 1e-8] = 1.0
     return s
 
 
-def _wb(a, b, s, rows=None):
+def _wb(a, b, s, groups=None, rows=None):
     """Within- and between-genome variance (summed over standardised dimensions) from two disjoint draws.
 
     a, b: (reps, genomes, dims) means of two disjoint n-window subsets of the same genome.
     within  = E ||a - b||^2 / 2                        (variance of one n-window vector about its genome's mean)
     between = Cov_genomes(a, b)                          (the shared, genome-specific part; noise cancels)
+    With `groups`, genomes are centred within their group first, so `between` is the variance
+    among genomes of the same phylum (dof = genomes - groups).
     """
     import numpy as np
 
     if rows is not None:
         a, b = a[:, rows], b[:, rows]
+        groups = None if groups is None else np.asarray(groups)[rows]
     a, b = a / s, b / s
-    w = 0.5 * ((a - b) ** 2).mean(axis=(0, 1), dtype=np.float64).sum()
     g = a.shape[1]
-    ac, bc = a - a.mean(1, keepdims=True), b - b.mean(1, keepdims=True)
-    bt = ((ac * bc).sum(1, dtype=np.float64) / (g - 1)).mean(0).sum()
+    gi = _group_idx(groups, g)
+    w = 0.5 * ((a - b) ** 2).mean(axis=(0, 1), dtype=np.float64).sum()
+    ac, bc = _center(a, gi, 1), _center(b, gi, 1)
+    bt = ((ac * bc).sum(1, dtype=np.float64) / (g - len(gi))).mean(0).sum()
     return float(w), float(bt)
 
 
-def _summarise(a, b, s, rng, n_boot):
+def _summarise(a, b, s, rng, n_boot, groups=None):
     import numpy as np
 
     g = a.shape[1]
-    w, bt = _wb(a, b, s)
+    w, bt = _wb(a, b, s, groups)
+    gi = _group_idx(groups, g)  # resample genomes WITHIN each group so group sizes (and the dof) stay fixed
+    draw = lambda: np.concatenate([idx[rng.integers(0, len(idx), len(idx))] for idx in gi])  # noqa: E731
     boots = np.asarray([[wb_ / bb_, bb_ / (bb_ + wb_)] for wb_, bb_ in
-                        (_wb(a, b, s, rows=rng.integers(0, g, g)) for _ in range(n_boot))])
-    return {"within": w, "between": bt, "ratio": w / bt, "reliability": bt / (bt + w),
-            "ratio_ci": [float(np.quantile(boots[:, 0], .025)), float(np.quantile(boots[:, 0], .975))],
-            "reliability_ci": [float(np.quantile(boots[:, 1], .025)), float(np.quantile(boots[:, 1], .975))]}
+                        (_wb(a, b, s, groups, rows=draw()) for _ in range(n_boot)) if bb_ > 0])
+    # Resampling with replacement shrinks variance components by ~(m-1)/m for groups of m genomes, which
+    # would bias the interval low; shift the bootstrap distribution so it is centred on the point estimate.
+    point = np.array([w / bt, bt / (bt + w)])
+    shift = point - boots.mean(0)
+    lo, hi = np.quantile(boots, .025, axis=0) + shift, np.quantile(boots, .975, axis=0) + shift
+    return {"within": w, "between": bt, "ratio": float(point[0]), "reliability": float(point[1]),
+            "ratio_ci": [float(lo[0]), float(hi[0])], "reliability_ci": [float(lo[1]), float(hi[1])]}
 
 
 def reliability_curve(pools, depths_random, depths_systematic, depths_model, reps: int = 10,
-                      n_boot: int = 100, seed: int = 0) -> dict:
+                      n_boot: int = 100, seed: int = 0, groups=None) -> dict:
     """Within/between-genome variance ratio and split-half reliability as a function of windows per genome.
 
     pools: (genomes, pool_windows, dims), windows in genome order (they are evenly spaced along it).
     Everything is computed after centring across genomes and scaling each dimension by its
     between-genome SD at full depth, so the shared component does not swamp the ratio.
+    With `groups` (e.g. phylum), centring and scaling are done WITHIN each group, so `between` is the
+    variation among genomes of the same phylum: the differences a within-phylum comparison must resolve.
 
     Three estimates, all giving within = E||a-b||^2/2 and between = Cov_genomes(a, b) for two
     disjoint n-window vectors a and b of the same genome:
@@ -603,10 +639,12 @@ def reliability_curve(pools, depths_random, depths_systematic, depths_model, rep
     pools = np.asarray(pools, dtype=np.float32)
     g, pool_n, d = pools.shape
     rng = np.random.default_rng(seed)
+    gi = _group_idx(groups, g)
+    dof = g - len(gi)
     mu = pools.mean(1)
-    s = _scale_from(mu)
+    s = _scale_from(mu, gi)
     v_bar = float((pools.var(1, ddof=1, dtype=np.float64) / s ** 2).sum(1).mean())
-    dims_eff = float(((mu.astype(np.float64).std(0, ddof=1) / s) ** 2).sum())
+    dims_eff = float(((_center(mu.astype(np.float64), gi, 0) ** 2).sum(0) / dof / s ** 2).sum())
     b_full = dims_eff - v_bar / pool_n  # between-genome variance net of the noise left in the pool mean
 
     random_, systematic = {}, {}
@@ -619,7 +657,7 @@ def reliability_curve(pools, depths_random, depths_systematic, depths_model, rep
             perm = np.argsort(rng.random((g, pool_n)), axis=1)
             a[r] = np.take_along_axis(pools, perm[:, :n, None], axis=1).mean(1)
             b[r] = np.take_along_axis(pools, perm[:, n:2 * n, None], axis=1).mean(1)
-        random_[n] = _summarise(a, b, s, rng, n_boot)
+        random_[n] = _summarise(a, b, s, rng, n_boot, groups)
     for n in depths_systematic:
         if pool_n % n or 2 * n > pool_n:
             continue
@@ -628,14 +666,15 @@ def reliability_curve(pools, depths_random, depths_systematic, depths_model, rep
         offsets = sorted({int(o) for o in np.linspace(0, max(stride - half - 1, 0), min(reps, max(stride - half, 1)))})
         a = np.stack([pools[:, np.arange(n) * stride + o].mean(1) for o in offsets])
         b = np.stack([pools[:, np.arange(n) * stride + o + half].mean(1) for o in offsets])
-        systematic[n] = {**_summarise(a, b, s, rng, n_boot), "offsets": len(offsets)}
+        systematic[n] = {**_summarise(a, b, s, rng, n_boot, groups), "offsets": len(offsets)}
         if n in random_:
             systematic[n]["systematic_gain"] = random_[n]["within"] / systematic[n]["within"]
     model = {n: {"within": v_bar / n, "between": b_full, "ratio": v_bar / n / b_full,
                  "reliability": b_full / (b_full + v_bar / n), "extrapolated": n not in random_}
              for n in depths_model}
     return {"random": random_, "systematic": systematic, "model": model, "per_window_variance": v_bar,
-            "between_full": b_full, "dims_effective": dims_eff, "cosine": cosine_report(mu)}
+            "between_full": b_full, "dims_effective": dims_eff, "cosine": cosine_report(mu),
+            "within_groups": groups is not None, "n_groups": len(gi)}
 
 
 def flattens_at(xs, ys, higher_is_better: bool = True, frac: float = 0.95, noise: float = 0.0) -> dict:
@@ -716,3 +755,269 @@ def plain(obj):
 
 def dump_json(obj, path: str | Path) -> None:
     Path(path).write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# Sequence-composition baselines: tetranucleotide frequencies and GC
+# ---------------------------------------------------------------------------
+_LUT = None
+_CANON = None
+
+
+def _lut():
+    import numpy as np
+
+    global _LUT
+    if _LUT is None:
+        _LUT = np.full(256, 4, dtype=np.uint8)
+        for i, ch in enumerate(b"ACGT"):
+            _LUT[ch] = i
+    return _LUT
+
+
+def canonical_tetra_map():
+    """(256 -> 136 class index). A 4-mer and its reverse complement share a class; palindromes stand alone."""
+    import numpy as np
+
+    global _CANON
+    if _CANON is None:
+        comp = [3, 2, 1, 0]  # A0 C1 G2 T3
+        rc = np.empty(256, dtype=int)
+        for k in range(256):
+            b = [(k >> 6) & 3, (k >> 4) & 3, (k >> 2) & 3, k & 3]
+            r = [comp[x] for x in reversed(b)]
+            rc[k] = r[0] * 64 + r[1] * 16 + r[2] * 4 + r[3]
+        canon = np.minimum(np.arange(256), rc)
+        ids = {c: i for i, c in enumerate(sorted(set(canon.tolist())))}
+        _CANON = np.array([ids[c] for c in canon])
+    return _CANON
+
+
+def count_tetra(seq: str):
+    """(256 tetranucleotide counts, 4 mononucleotide counts) of one sequence; k-mers containing non-ACGT are skipped."""
+    import numpy as np
+
+    a = _lut()[np.frombuffer(seq.encode("ascii"), dtype=np.uint8)]
+    valid = a < 4
+    mono = np.bincount(a[valid], minlength=4).astype(np.float64)
+    if len(a) < 4:
+        return np.zeros(256), mono
+    a32 = a.astype(np.int32)
+    idx = a32[:-3] * 64 + a32[1:-2] * 16 + a32[2:-1] * 4 + a32[3:]
+    ok = valid[:-3] & valid[1:-2] & valid[2:-1] & valid[3:]
+    return np.bincount(idx[ok], minlength=256).astype(np.float64), mono
+
+
+def iter_contigs(fasta_gz: str | Path):
+    """Yield (id, uppercase sequence) for every record of a gzipped FASTA."""
+    cid, parts = None, []
+    with gzip.open(fasta_gz, "rt") as f:
+        for line in f:
+            if line.startswith(">"):
+                if cid is not None:
+                    yield cid, "".join(parts).upper()
+                cid, parts = (line[1:].split() or [""])[0], []
+            else:
+                parts.append(line.strip())
+    if cid is not None:
+        yield cid, "".join(parts).upper()
+
+
+def sequence_features(fasta_gz: str | Path, windows: list | None = None):
+    """(2, 260) array: row 0 = whole genome, row 1 = the given windows only; each row = 256 tetra counts + 4 mono counts.
+
+    `windows` is a list of [contig id, start] (as saved in the embedding meta); each is WINDOW bp. Row 1 lets a
+    composition baseline see exactly the sequence Evo 2 saw, which is a small part of the genome at low depth.
+    """
+    import numpy as np
+
+    genome, seqs = np.zeros(260), {}
+    for cid, seq in iter_contigs(fasta_gz):
+        t, m = count_tetra(seq)
+        genome[:256] += t
+        genome[256:] += m
+        if windows is not None:
+            seqs.setdefault(cid, seq)
+    win = np.zeros(260)
+    for cid, start in windows or []:
+        t, m = count_tetra(seqs[cid][start:start + WINDOW])
+        win[:256] += t
+        win[256:] += m
+    return np.stack([genome, win])
+
+
+def tetra_frequencies(row):
+    """136 canonical tetranucleotide frequencies from a 260-vector of counts."""
+    import numpy as np
+
+    counts = np.bincount(canonical_tetra_map(), weights=np.asarray(row[:256], dtype=float), minlength=136)
+    return counts / counts.sum()
+
+
+def gc_from_counts(row) -> float:
+    m = row[256:]
+    return float((m[1] + m[2]) / m.sum())
+
+
+# ---------------------------------------------------------------------------
+# Leave-one-phylum-out evaluation with per-phylum scoring
+# ---------------------------------------------------------------------------
+LOPO_C_GRID = (1e-4, 1e-3, 1e-2, 1e-1, 1.0)
+
+
+def _lr_scores(X_tr, y_tr, X_te, C):
+    return _pipeline(C).fit(X_tr, y_tr).decision_function(X_te)
+
+
+def _auc_or_nan(y, s) -> float:
+    y = np_asarray_bool(y)
+    return manual_auc(y, s) if 0 < y.sum() < len(y) else float("nan")
+
+
+def np_asarray_bool(y):
+    import numpy as np
+
+    return np.asarray(y).astype(bool)
+
+
+def cluster_bootstrap(scores: dict, y, clusters, n_boot: int, rng) -> dict:
+    """Resample whole clusters (genera) with replacement; AUC of every model on each SAME resample.
+
+    Genomes of one genus are near-copies of each other in both embedding and label, so resampling genomes
+    would understate the uncertainty. Returns {model: array(n_boot)}; resamples lacking a class are dropped
+    for all models together, so paired differences stay aligned.
+    """
+    import numpy as np
+
+    y = np.asarray(y).astype(bool)
+    clusters = np.asarray(clusters)
+    members = [np.flatnonzero(clusters == c) for c in sorted(set(clusters))]
+    out = {m: [] for m in scores}
+    for _ in range(n_boot):
+        pick = rng.integers(0, len(members), len(members))
+        idx = np.concatenate([members[i] for i in pick])
+        if not 0 < y[idx].sum() < len(idx):
+            continue
+        for m, sc in scores.items():
+            out[m].append(manual_auc(y[idx], sc[idx]))
+    return {m: np.asarray(v) for m, v in out.items()}
+
+
+def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list, n_perm: int = 50, n_boot: int = 1000,
+                  seed: int = 0, n_jobs: int = 1) -> dict:
+    """Hold out one phylum at a time, train on the rest, score AUC WITHIN the held-out phylum.
+
+    features: {feature set name: (N, d) array}. models: {model name: {"features": set, "grid": [C...], "null": bool}}.
+    For each model and held-out phylum, C is chosen by an inner leave-one-phylum-out over the training phyla
+    (metric: mean within-phylum AUC), so a 4096-d model and a 136-d model are each regularised for their
+    own size. A one-value grid means "fixed C, no tuning". Uncertainty is a genus-cluster bootstrap; the
+    null refits on labels shuffled WITHIN each phylum (phylum prevalence kept, within-phylum signal destroyed).
+    A constant score ties every pair, so the "majority class" floor is exactly 0.5 for a within-phylum AUC.
+    """
+    import numpy as np
+    from joblib import Parallel, delayed
+
+    y = np.asarray(y).astype(bool)
+    phyla, genera = np.asarray(phyla), np.asarray(genera)
+    order = sorted(set(phyla))
+    idx = {h: np.flatnonzero(phyla == h) for h in order}
+    rows_of = lambda hs: np.concatenate([idx[h] for h in hs])  # noqa: E731
+
+    # 1. inner tuning: for outer h, inner t, C -> within-phylum AUC of a model trained on (others \ t)
+    tasks = []
+    for name, spec in models.items():
+        for h in order:
+            rest = [g for g in order if g != h]
+            if len(spec["grid"]) > 1:
+                for t in rest:
+                    tr = rows_of([g for g in rest if g != t])
+                    for C in spec["grid"]:
+                        tasks.append((name, h, t, C, tr, idx[t]))
+    def inner(name, h, t, C, tr, te):
+        X = features[models[name]["features"]]
+        return name, h, C, _auc_or_nan(y[te], _lr_scores(X[tr], y[tr], X[te], C))
+    got = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(inner)(*t) for t in tasks)
+    inner_auc: dict = {}
+    for name, h, C, a in got:
+        inner_auc.setdefault((name, h, C), []).append(a)
+    chosen = {}
+    for name, spec in models.items():
+        for h in order:
+            if len(spec["grid"]) == 1:
+                chosen[(name, h)] = spec["grid"][0]
+            else:  # highest mean inner AUC; ties -> the stronger regulariser (smaller C)
+                chosen[(name, h)] = max(sorted(spec["grid"]), key=lambda C: (np.nanmean(inner_auc[(name, h, C)]), -C))
+
+    # 2. outer fit + within-phylum scores
+    def outer(name, h):
+        X = features[models[name]["features"]]
+        tr = rows_of([g for g in order if g != h])
+        return (name, h), _lr_scores(X[tr], y[tr], X[idx[h]], chosen[(name, h)])
+    scores = dict(Parallel(n_jobs=n_jobs, prefer="threads")(delayed(outer)(n, h) for n in models for h in order))
+
+    # 3. cluster bootstrap, paired across models
+    rng = np.random.default_rng(seed)
+    boots, per = {}, {}
+    for h in order:
+        te = idx[h]
+        b = cluster_bootstrap({n: scores[(n, h)] for n in models}, y[te], genera[te], n_boot, rng)
+        boots[h] = b
+        per[h] = {"n": int(len(te)), "n_positive": int(y[te].sum()), "prevalence": float(y[te].mean()),
+                  "n_genera": int(len(set(genera[te]))), "majority_accuracy": float(max(y[te].mean(), 1 - y[te].mean())),
+                  "floor_auc": 0.5, "models": {}, "deltas": {}}
+        for n in models:
+            auc = _auc_or_nan(y[te], scores[(n, h)])
+            lo, hi = (float(np.quantile(b[n], .025)), float(np.quantile(b[n], .975))) if len(b[n]) else (float("nan"),) * 2
+            per[h]["models"][n] = {"auc": auc, "ci": [lo, hi], "C": float(chosen[(n, h)])}
+        for a_, b_ in compare:
+            k = min(len(boots[h][a_]), len(boots[h][b_]))
+            d = boots[h][a_][:k] - boots[h][b_][:k]
+            per[h]["deltas"][f"{a_} - {b_}"] = {"delta": per[h]["models"][a_]["auc"] - per[h]["models"][b_]["auc"],
+                                                 "ci": [float(np.quantile(d, .025)), float(np.quantile(d, .975))],
+                                                 "share_boot_positive": float((d > 0).mean())}
+    macro = {"models": {}, "deltas": {}}
+    kmin = min(len(boots[h][n]) for h in order for n in models)
+    for n in models:
+        m = np.mean([boots[h][n][:kmin] for h in order], axis=0)
+        macro["models"][n] = {"auc": float(np.mean([per[h]["models"][n]["auc"] for h in order])),
+                              "ci": [float(np.quantile(m, .025)), float(np.quantile(m, .975))]}
+    for a_, b_ in compare:
+        d = np.mean([boots[h][a_][:kmin] - boots[h][b_][:kmin] for h in order], axis=0)
+        macro["deltas"][f"{a_} - {b_}"] = {"delta": macro["models"][a_]["auc"] - macro["models"][b_]["auc"],
+                                            "ci": [float(np.quantile(d, .025)), float(np.quantile(d, .975))],
+                                            "share_boot_positive": float((d > 0).mean())}
+
+    # 4. shuffle null: labels permuted within each phylum, refit with the chosen C, scored in the held-out phylum
+    null_models = [n for n, spec in models.items() if spec.get("null", True)]
+    if n_perm and null_models:
+        prng = np.random.default_rng(seed + 1)
+        perms = []
+        for _ in range(n_perm):
+            yp = y.copy()
+            for h in order:
+                yp[idx[h]] = y[prng.permutation(idx[h])]
+            perms.append(yp)
+
+        def null_task(k, name, h):
+            X = features[models[name]["features"]]
+            tr = rows_of([g for g in order if g != h])
+            yp = perms[k]
+            return k, name, h, _auc_or_nan(yp[idx[h]], _lr_scores(X[tr], yp[tr], X[idx[h]], chosen[(name, h)]))
+        got = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(null_task)(k, n, h) for k in range(n_perm) for n in null_models for h in order)
+        nul: dict = {}
+        for k, n, h, a in got:
+            nul.setdefault((n, h), {})[k] = a
+        for h in order:
+            for n in null_models:
+                v = np.asarray([nul[(n, h)][k] for k in range(n_perm)])
+                obs = per[h]["models"][n]["auc"]
+                per[h]["models"][n]["null"] = {"mean": float(np.nanmean(v)), "sd": float(np.nanstd(v, ddof=1)),
+                                                "q95": float(np.nanquantile(v, .95)),
+                                                "p": float((1 + np.nansum(v >= obs)) / (1 + np.sum(~np.isnan(v))))}
+        for n in null_models:
+            m = np.mean([[nul[(n, h)][k] for h in order] for k in range(n_perm)], axis=1)
+            obs = macro["models"][n]["auc"]
+            macro["models"][n]["null"] = {"mean": float(m.mean()), "sd": float(m.std(ddof=1)), "q95": float(np.quantile(m, .95)),
+                                          "p": float((1 + np.sum(m >= obs)) / (1 + len(m)))}
+    return {"phyla": order, "models": list(models), "per_phylum": per, "macro": macro, "n_perm": n_perm, "n_boot": n_boot,
+            "inner_auc": {f"{n}|{h}|{C}": float(np.nanmean(v)) for (n, h, C), v in inner_auc.items()}}

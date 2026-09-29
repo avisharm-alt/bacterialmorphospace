@@ -240,8 +240,11 @@ def test_stratified_sample_is_deterministic_and_unique():
 # --- cost ------------------------------------------------------------------------------------
 def test_estimate_reflects_the_recipe_numbers():
     e = core.estimate_gpu(200, 100, n_containers=1)
-    assert 4.0 < e["gpu_hours"] < 4.6 and 8.5 < e["usd"] < 10  # the sweep is NOT a "couple of dollars"
+    assert 4.0 < e["gpu_hours"] < 4.8 and 8.5 < e["usd"] < 10.5  # the sweep is NOT a "couple of dollars"
     assert core.estimate_gpu(2580, 25)["usd"] > 29  # 25 windows across the panel already eats a $30 credit
+    # the 2,399 still-to-embed genomes of the four testable phyla at depth 10 (constants calibrated on the sweep)
+    d10 = core.estimate_gpu(2399, 10, n_containers=4)
+    assert 12 < d10["usd"] < 14.5
 
 
 # --- evaluation ------------------------------------------------------------------------------
@@ -452,7 +455,7 @@ def test_budget_stop_is_announced_explicitly_and_spend_is_printed(monkeypatch, c
 def test_evaluate_sweep_refuses_genomes_that_were_never_embedded(tmp_path, monkeypatch):
     m = _patch_embedder(monkeypatch, [])
     monkeypatch.setattr(m, "EMB_DIR", str(tmp_path))
-    monkeypatch.setattr(m, "out_vol", type("V", (), {"reload": staticmethod(lambda: None)})())
+    monkeypatch.setattr(m, "out_vol", type("V", (), {"reload": staticmethod(lambda: None), "commit": staticmethod(lambda: None)})())
     rows = [{"acc": f"GCF_{i}.1", "motility": "yes", "group": "g"} for i in range(3)]
     with pytest.raises(RuntimeError, match=r"0 of 3 genomes embedded"):
         m._evaluate_sweep(rows, [10, 25], 3)
@@ -517,7 +520,7 @@ def _patched(monkeypatch, tmp_path):
     m = _patch_embedder(monkeypatch, [])
     monkeypatch.setattr(m, "EMB_DIR", str(tmp_path / "embeddings"))
     monkeypatch.setattr(m, "GENOME_DIR", str(tmp_path / "genomes"))
-    monkeypatch.setattr(m, "out_vol", type("V", (), {"reload": staticmethod(lambda: None)})())
+    monkeypatch.setattr(m, "out_vol", type("V", (), {"reload": staticmethod(lambda: None), "commit": staticmethod(lambda: None)})())
     return m
 
 
@@ -692,3 +695,219 @@ def test_reliability_run_on_a_fake_volume_and_the_entrypoint_prints_everything(t
         assert needle in out, needle
     assert (tmp_path / "rep" / "tables" / "evo2_depth_reliability.json").exists()
     assert (tmp_path / "rep" / "tables" / "trait_within_phylum_variance.tsv").exists()
+
+
+# --- composition baselines ------------------------------------------------------------------------
+def _revcomp(seq):
+    return seq.translate(str.maketrans("ACGT", "TGCA"))[::-1]
+
+
+def test_canonical_map_has_136_classes_and_16_palindromes():
+    np = pytest.importorskip("numpy")
+    m = core.canonical_tetra_map()
+    assert len(m) == 256 and m.max() == 135 and len(set(m.tolist())) == 136
+    sizes = np.bincount(m)
+    assert (sizes == 1).sum() == 16 and (sizes == 2).sum() == 120  # 16 palindromic 4-mers, 120 reverse-complement pairs
+
+
+def test_count_tetra_counts_kmers_skips_ambiguous_and_is_strand_symmetric():
+    np = pytest.importorskip("numpy")
+    t, mono = core.count_tetra("ACGTAC")  # ACGT, CGTA, GTAC
+    assert t.sum() == 3 and t[0 * 64 + 1 * 16 + 2 * 4 + 3] == 1 and mono.tolist() == [2, 2, 1, 1]
+    assert core.count_tetra("ACGNTAC")[0].sum() == 0  # every 4-mer overlaps the N
+    rng = np.random.default_rng(0)
+    seq = "".join(rng.choice(list("ACGT"), 5000))
+    f, r = core.tetra_frequencies(np.r_[core.count_tetra(seq)[0], core.count_tetra(seq)[1]]), core.tetra_frequencies(
+        np.r_[core.count_tetra(_revcomp(seq))[0], core.count_tetra(_revcomp(seq))[1]])
+    assert f.sum() == pytest.approx(1.0) and np.allclose(f, r)  # canonical frequencies ignore strand
+
+
+def test_sequence_features_whole_genome_and_matched_windows(tmp_path):
+    np = pytest.importorskip("numpy")
+    a, b = "A" * 9000 + "GC" * 4500, "C" * 3000  # b is shorter than a window
+    p = tmp_path / "g.fna.gz"
+    with gzip.open(p, "wt") as f:
+        f.write(f">ctgA x\n{a}\n>ctgB y\n{b}\n")
+    feat = core.sequence_features(p, windows=[["ctgA", 0]])
+    assert feat.shape == (2, 260)
+    assert feat[0, 256:].sum() == len(a) + len(b)  # whole genome sees both contigs
+    assert feat[1, 256:].sum() == core.WINDOW and feat[1, 256] == core.WINDOW  # the window is 8192 x 'A'
+    assert core.gc_from_counts(feat[0]) == pytest.approx((4500 + 4500 + 3000) / (len(a) + len(b)))
+    assert core.gc_from_counts(feat[1]) == 0.0
+
+
+# --- leave-one-phylum-out evaluation ----------------------------------------------------------------
+def _lopo_data(signal_in="emb", n_per=90, seed=0):
+    """4 phyla with different motility prevalences; the motility signal shares one direction across phyla."""
+    np = pytest.importorskip("numpy")
+    rng = np.random.default_rng(seed)
+    phyla = np.repeat(["P1", "P2", "P3", "P4"], n_per)
+    prev = {"P1": .6, "P2": .4, "P3": .2, "P4": .5}
+    y = np.array([rng.random() < prev[p] for p in phyla])
+    genera = np.array([f"{p}_g{i // 3}" for p in phyla for i in range(n_per)])
+    centres = {p: rng.normal(size=60) * 2 for p in prev}
+    base = np.stack([centres[p] + rng.normal(size=60) for p in phyla])
+    w = rng.normal(size=60)
+    emb = base + (1.2 * (y[:, None] * 2 - 1) * w if signal_in == "emb" else 0)
+    kmer = rng.normal(size=(len(y), 20)) + (1.2 * (y[:, None] * 2 - 1) * rng.normal(size=20) if signal_in == "kmer" else 0)
+    return {"emb": emb, "kmer": kmer, "gc": rng.normal(size=(len(y), 1))}, y, phyla, genera
+
+
+_MODELS = {"evo2": {"features": "emb", "grid": [1e-3, 1e-2, 1e-1], "null": True},
+           "kmer": {"features": "kmer", "grid": [1e-3, 1e-2, 1e-1], "null": True},
+           "gc": {"features": "gc", "grid": [1.0], "null": True}}
+
+
+def test_lopo_finds_signal_in_the_right_feature_set_and_null_is_centred():
+    pytest.importorskip("sklearn")
+    feats, y, ph, gen = _lopo_data("emb")
+    r = core.lopo_evaluate(feats, y, ph, gen, _MODELS, [("evo2", "kmer"), ("evo2", "gc")], n_perm=12, n_boot=150, seed=1, n_jobs=2)
+    assert r["phyla"] == ["P1", "P2", "P3", "P4"]
+    for h in r["phyla"]:
+        e, k = r["per_phylum"][h]["models"]["evo2"], r["per_phylum"][h]["models"]["kmer"]
+        assert e["auc"] > 0.8 and 0.2 < k["auc"] < 0.8  # a single noise AUC has SD ~0.07 (n=90); bound is loose on purpose
+        assert e["ci"][0] <= e["auc"] <= e["ci"][1]
+        assert r["per_phylum"][h]["floor_auc"] == 0.5
+        assert 0.3 < e["null"]["mean"] < 0.7 and e["null"]["p"] < 0.2
+    d = r["macro"]["deltas"]["evo2 - kmer"]
+    assert d["delta"] > 0.2 and d["ci"][0] > 0  # detectable advantage
+    assert 0.4 < r["macro"]["models"]["kmer"]["auc"] < 0.6  # noise-only features average ~0.5 over the 4 phyla
+    assert r["macro"]["models"]["evo2"]["null"]["mean"] == pytest.approx(0.5, abs=0.06)
+
+
+def test_lopo_reports_no_advantage_when_the_signal_lives_in_the_baseline():
+    pytest.importorskip("sklearn")
+    feats, y, ph, gen = _lopo_data("kmer", seed=3)
+    r = core.lopo_evaluate(feats, y, ph, gen, _MODELS, [("evo2", "kmer")], n_perm=0, n_boot=150, seed=1, n_jobs=2)
+    d = r["macro"]["deltas"]["evo2 - kmer"]
+    assert d["delta"] < -0.15 and d["ci"][1] < 0  # the baseline clearly wins, and the output says so
+    assert "null" not in r["per_phylum"]["P1"]["models"]["evo2"]  # n_perm=0 skips the null
+
+
+def test_lopo_regularisation_is_tuned_inside_training_phyla_only():
+    pytest.importorskip("sklearn")
+    feats, y, ph, gen = _lopo_data("emb", seed=5)
+    r = core.lopo_evaluate(feats, y, ph, gen, _MODELS, [], n_perm=0, n_boot=20, seed=1, n_jobs=2)
+    for h in r["phyla"]:
+        assert r["per_phylum"][h]["models"]["evo2"]["C"] in _MODELS["evo2"]["grid"]
+        assert r["per_phylum"][h]["models"]["gc"]["C"] == 1.0  # one-value grid = fixed, no inner search
+    keys = [k for k in r["inner_auc"] if k.startswith("evo2|P1|")]
+    assert len(keys) == 3  # only the 3 candidate Cs, evaluated by holding out each of the other 3 phyla
+
+
+def test_cluster_bootstrap_resamples_genera_and_keeps_models_paired():
+    np = pytest.importorskip("numpy")
+    rng = np.random.default_rng(0)
+    y = rng.random(120) < .5
+    clusters = np.repeat(np.arange(30), 4)
+    s = {"a": y + rng.normal(size=120), "b": rng.normal(size=120)}
+    out = core.cluster_bootstrap(s, y, clusters, 200, np.random.default_rng(1))
+    assert len(out["a"]) == len(out["b"]) > 150  # dropped resamples are dropped for all models together
+    assert out["a"].mean() > out["b"].mean() + 0.2
+
+
+# --- the four-phylum run, end to end on a fake volume ------------------------------------------------
+def _lopo_rows(tmp_path, n=48, phyla=("P1", "P2", "P3", "P4")):
+    np = pytest.importorskip("numpy")
+    rows = _fake_volume(tmp_path, n=n)  # groups A..F; re-label into 4 phyla and give each genome a genus
+    out = []
+    for i, r in enumerate(rows):
+        out.append({"acc": r["acc"], "phylum": phyla[i % 4], "genus": f"g{i // 2}", "motility": "yes" if (i * 7 + i // 4) % 3 == 0 else "no"})
+    return out
+
+
+def _stub_volume_listing(monkeypatch, m, tmp_path):
+    def existing(sub):
+        d = tmp_path / sub
+        return {p.name for p in d.iterdir()} if d.exists() else set()
+    monkeypatch.setattr(m, "existing_dirs", None, raising=False)
+    monkeypatch.setattr(m, "_existing", existing)
+
+
+def test_seqfeat_batch_checkpoints_per_genome_and_matches_the_windows_evo2_saw(tmp_path, monkeypatch):
+    np = pytest.importorskip("numpy")
+    m = _patched(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "FEAT_DIR", str(tmp_path / "features"))
+    rows = _lopo_rows(tmp_path)
+    accs = [r["acc"] for r in rows]
+    r1 = m._seqfeat_batch(accs, 10)
+    assert r1["done"] == len(accs) and not r1["errors"]
+    f = np.load(tmp_path / "features" / f"{accs[0]}__seqfeat_n10.npy")
+    assert f.shape == (2, 260) and f[0, 256:].sum() == 3 * 12000  # 3 contigs of 12,000 bp (6,000 dinucleotide units) in the fixture
+    assert 0 < f[1, 256:].sum() <= 10 * core.WINDOW  # only the depth-10 subset of the 100-window pool
+    r2 = m._seqfeat_batch(accs, 10)
+    assert r2["skipped"] == len(accs) and r2["done"] == 0  # resumable: nothing is recomputed
+    (tmp_path / "embeddings" / f"{accs[1]}__meta.json").unlink()
+    r3 = m._seqfeat_batch([accs[1]], 25)
+    assert r3["done"] == 0 and len(r3["errors"]) == 1 and accs[1] in r3["errors"][0][0]  # a failure is reported, not swallowed
+
+
+def test_lopo_run_and_entrypoint_end_to_end(tmp_path, monkeypatch, capsys):
+    pytest.importorskip("sklearn")
+    m = _patched(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "FEAT_DIR", str(tmp_path / "features"))
+    rows = _lopo_rows(tmp_path)
+    _stub_volume_listing(monkeypatch, m, tmp_path)
+    map_stub = type("F", (), {"map": staticmethod(lambda batches, kwargs=None: [m._seqfeat_batch(b, **kwargs) for b in batches])})()
+    monkeypatch.setattr(m, "seqfeat_batch", map_stub)
+    remote_stub = type("F", (), {"remote": staticmethod(lambda rows_, n, npm, nb, seed: m._lopo_run(rows_, n, 4, 30, seed))})()
+    monkeypatch.setattr(m, "lopo_run", remote_stub)
+    panel = tmp_path / "panel.tsv"
+    panel.write_text("ncbi_assembly_accession\tassembly_genbank\tgtdb_phylum\tgtdb_genus\tmotility\n" + "".join(
+        f"{r['acc']}\t\t{r['phylum']}\t{r['genus']}\t{r['motility']}\n" for r in rows))
+    m.lopo.info.raw_f(panel=str(panel), phyla="P1,P2,P3,P4", n_windows=10, n_perm=4, n_boot=30, batch=10, reports=str(tmp_path / "rep"))
+    out = capsys.readouterr().out
+    for needle in ("48 of 48 genomes in 4 phyla have a depth-10 embedding", "sequence features: 0 cached, 48 to compute",
+                   "LEAVE-ONE-PHYLUM-OUT", "scored WITHIN the held-out phylum", "exactly 0.500", "k-mer(genome)", "k-mer(windows)", "GC only",
+                   "MACRO MEAN", "PAIRED DIFFERENCE", "evo2 - kmer_genome", "SHUFFLE NULL", "REGULARISATION", "Evo 2, C=1 fixed", "VERDICT vs k-mer(genome)"):
+        assert needle in out, needle
+    assert (tmp_path / "rep" / "tables" / "evo2_lopo_motility.json").exists()
+
+
+def test_lopo_run_refuses_when_too_few_genomes_are_ready(tmp_path, monkeypatch):
+    m = _patched(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "FEAT_DIR", str(tmp_path / "features"))
+    rows = _lopo_rows(tmp_path)
+    with pytest.raises(RuntimeError, match=r"0 of 48 genomes have both a depth-10 embedding and sequence features"):
+        m._lopo_run(rows, 10, 2, 10, 1)  # embeddings exist but no sequence features were computed
+
+
+def test_lopo_entrypoint_refuses_to_run_before_embeddings_exist(tmp_path, monkeypatch):
+    m = _patched(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "_existing", lambda sub: set())
+    panel = tmp_path / "panel.tsv"
+    panel.write_text("ncbi_assembly_accession\tassembly_genbank\tgtdb_phylum\tgtdb_genus\tmotility\nGCF_1.1\t\tP1\tg\tyes\n")
+    with pytest.raises(SystemExit, match=r"embed_all --n-windows 10 --phyla"):
+        m.lopo.info.raw_f(panel=str(panel), phyla="P1", n_windows=10, reports=str(tmp_path / "rep"))
+
+
+def test_embed_all_phyla_filter_counts_and_rejects_unknown_names(tmp_path, monkeypatch, capsys):
+    m = _patched(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "_existing", lambda sub: {"GCF_1.1__n10.npy"})
+    panel = tmp_path / "panel.tsv"
+    panel.write_text("ncbi_assembly_accession\tassembly_genbank\tgtdb_phylum\tmotility\n" + "".join(
+        f"GCF_{i}.1\t\t{'Big' if i < 30 else 'Small'}\tyes\n" for i in range(40)))
+    m.embed_all.info.raw_f(panel=str(panel), n_windows=10, phyla="Big", dry_run=True, reports=str(tmp_path / "rep"))
+    out = capsys.readouterr().out
+    assert "Big 30" in out and "1/30 done; 29 to embed at n=10" in out
+    with pytest.raises(SystemExit, match="unknown phyla"):
+        m.embed_all.info.raw_f(panel=str(panel), n_windows=10, phyla="Bigg", dry_run=True, reports=str(tmp_path / "rep"))
+
+
+def test_within_group_reliability_is_lower_when_between_group_variance_dominates():
+    """Large phylum offsets inflate ordinary reliability; centring within phylum exposes the real precision."""
+    np = pytest.importorskip("numpy")
+    rng = np.random.default_rng(0)
+    g, p, d, k = 96, 20, 100, 12
+    groups = np.repeat([f"P{i}" for i in range(k)], g // k)
+    phylum_offset = 10 * rng.normal(size=(k, d))[np.repeat(np.arange(k), g // k)]
+    mu = 30 * rng.normal(size=d) + phylum_offset + 1.0 * rng.normal(size=(g, d))  # within-phylum SD 1, between-phylum SD 10
+    pools = (mu[:, None, :] + 3.0 * rng.normal(size=(g, p, d))).astype(np.float32)
+    args = ([1], [1], [1])
+    overall = core.reliability_curve(pools, *args, reps=8, n_boot=15, seed=1)
+    within = core.reliability_curve(pools, *args, reps=8, n_boot=15, seed=1, groups=groups)
+    ro, rw = overall["systematic"][1]["reliability"], within["systematic"][1]["reliability"]
+    assert ro > 0.8  # about (10^2 + 1) / ((10^2 + 1) + 3^2) = 0.92: looks excellent
+    assert rw == pytest.approx(1 / (1 + 9), abs=0.05)  # 1 / (1 + 3^2): within a phylum the signal is mostly noise at n=1
+    assert rw < ro - 0.5 and within["within_groups"] and within["n_groups"] == k and not overall["within_groups"]
+    assert within["systematic"][1]["reliability_ci"][0] <= rw <= within["systematic"][1]["reliability_ci"][1]

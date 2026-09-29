@@ -259,6 +259,28 @@ kept, when the running estimate exceeds it. Caveats to read the result with:
 - A few windows contain scaffold gaps (7 of 10,000 windows exceed 5% ambiguous bases in the default sample). They are
   embedded as they are; the worst window per genome is in its meta file.
 
+### Motility, leave-one-phylum-out (depth 10, four testable phyla)
+
+```bash
+# 1. embed the 2,436 genomes of Pseudomonadota, Bacillota, Actinomycetota and Bacteroidota (~2,400 still to do, ~$13)
+caffeinate -i modal run -m src.evo2_modal::embed_all --n-windows 10 --max-usd 16 \
+    --phyla Pseudomonadota,Bacillota,Actinomycetota,Bacteroidota
+# 2. CPU only: sequence features, then hold out each phylum in turn and score AUC WITHIN it
+modal run -m src.evo2_modal::lopo
+```
+
+The evaluation holds out one phylum, trains on the other three, and scores AUC inside the held-out phylum, so it
+measures within-phylum signal on an unseen clade (a pooled fold AUC mostly ranks phyla against each other, which is what
+made the first sweep uninformative). Models, all on the same genomes: Evo 2 depth-10 embedding; canonical tetranucleotide
+frequencies of the whole genome (136 features); the same frequencies over only the windows Evo 2 saw; genome GC; and the
+constant-score floor, whose within-phylum AUC is exactly 0.5. Regularisation `C` is tuned for every model by an inner
+leave-one-phylum-out over the training phyla, so a 4096-d and a 136-d model are each regularised for their own size; the
+untuned `C=1` pipeline is reported too. Intervals are a genus-cluster bootstrap (genomes of one genus are near-copies),
+differences are paired on the same resamples, and the shuffle null permutes labels within each phylum and refits.
+
+`reliability --within-phylum` repeats the depth study centred within phylum: ordinary reliability is dominated by
+between-phylum differences, but a within-phylum comparison depends on the much smaller differences among genomes of one phylum.
+
 ## Layout
 
 ```

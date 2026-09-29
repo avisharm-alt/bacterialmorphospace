@@ -528,11 +528,11 @@ DEPTH_GRID = [1, 2, 4, 5, 10, 20, 25, 50, 100]  # divisors of the 100-window poo
 
 
 @app.function(image=cpu_image, volumes={OUT_DIR: out_vol}, timeout=3600, cpu=4, memory=16384)
-def reliability_run(rows: list[dict], seed: int, reps: int, n_boot: int) -> dict:
-    return _plain_call(_reliability_run, rows, seed, reps, n_boot)
+def reliability_run(rows: list[dict], seed: int, reps: int, n_boot: int, within_groups: bool = False) -> dict:
+    return _plain_call(_reliability_run, rows, seed, reps, n_boot, within_groups)
 
 
-def _reliability_run(rows: list[dict], seed: int, reps: int, n_boot: int) -> dict:
+def _reliability_run(rows: list[dict], seed: int, reps: int, n_boot: int, within_groups: bool = False) -> dict:
     """Free (CPU, existing checkpoints) sampling-depth study built from the saved 100-window pools."""
     import json
 
@@ -556,7 +556,8 @@ def _reliability_run(rows: list[dict], seed: int, reps: int, n_boot: int) -> dic
     groups = np.array([r["group"] for r in rows])
     gc = np.array([core.gc_content(f"{GENOME_DIR}/{a}.fna.gz") for a in accs])
 
-    curve = core.reliability_curve(pools, grid, grid, grid, reps=reps, n_boot=n_boot, seed=seed)
+    curve = core.reliability_curve(pools, grid, grid, grid, reps=reps, n_boot=n_boot, seed=seed,
+                                   groups=groups if within_groups else None)
 
     # anchors: GC prediction (out-of-phylum) and ungrouped motility AUC, on the same evenly spaced subsets
     tasks = []
@@ -577,6 +578,84 @@ def _reliability_run(rows: list[dict], seed: int, reps: int, n_boot: int) -> dic
         a["motility_auc"].append(mo["auc_mean"]), a["motility_cv_sd"].append(mo["auc_sd_over_repeats"])
     return {"grid": grid, "n_genomes": g, "pool_n": pool_n, "curve": curve, "anchors": anchors,
             "gc_range": [float(gc.min()), float(gc.max())]}
+
+
+FEAT_DIR = f"{OUT_DIR}/features"
+
+
+@app.function(image=cpu_image, volumes={OUT_DIR: out_vol}, timeout=3600, cpu=2, memory=4096, max_containers=8)
+def seqfeat_batch(accs: list[str], n_windows: int) -> dict:
+    return _plain_call(_seqfeat_batch, accs, n_windows)
+
+
+def _seqfeat_batch(accs: list[str], n_windows: int) -> dict:
+    """Tetranucleotide + mono-nucleotide counts for a batch of genomes: whole genome, and the exact windows Evo 2 saw.
+
+    One checkpoint per genome (`features/<acc>__seqfeat_n<N>.npy`, shape (2, 260)); existing files are skipped.
+    """
+    import json
+
+    out_vol.reload()
+    os.makedirs(FEAT_DIR, exist_ok=True)
+    done = skipped = 0
+    errors = []
+    for acc in accs:
+        dest = f"{FEAT_DIR}/{acc}__seqfeat_n{n_windows}.npy"
+        if os.path.exists(dest):
+            skipped += 1
+            continue
+        try:
+            meta = json.load(open(f"{EMB_DIR}/{acc}__meta.json"))
+            w = meta["windows"]
+            if meta["pool_n"] != n_windows:  # sweep genomes: depth-N vectors are an evenly spaced subset of the 100-pool
+                w = [w[i] for i in core.subset_indices(meta["pool_n"], n_windows)]
+            _save_npy(dest, core.sequence_features(f"{GENOME_DIR}/{acc}.fna.gz", w))
+            done += 1
+        except Exception:  # noqa: BLE001
+            errors.append([acc, traceback.format_exc()[-300:]])
+    out_vol.commit()
+    return {"done": done, "skipped": skipped, "errors": errors}
+
+
+@app.function(image=cpu_image, volumes={OUT_DIR: out_vol}, timeout=10800, cpu=8, memory=16384)
+def lopo_run(rows: list[dict], n_windows: int, n_perm: int, n_boot: int, seed: int) -> dict:
+    return _plain_call(_lopo_run, rows, n_windows, n_perm, n_boot, seed)
+
+
+def _lopo_run(rows: list[dict], n_windows: int, n_perm: int, n_boot: int, seed: int) -> dict:
+    """Leave-one-phylum-out, scored within the held-out phylum: Evo 2 vs tetranucleotides vs GC vs the trivial floor."""
+    import numpy as np
+    from threadpoolctl import threadpool_limits
+
+    out_vol.reload()
+    ok = [r for r in rows if os.path.exists(f"{EMB_DIR}/{r['acc']}__n{n_windows}.npy")
+          and os.path.exists(f"{FEAT_DIR}/{r['acc']}__seqfeat_n{n_windows}.npy")]
+    if not rows or len(ok) < 0.98 * len(rows):
+        miss = [r["acc"] for r in rows if r not in ok]
+        raise RuntimeError(f"{len(ok)} of {len(rows)} genomes have both a depth-{n_windows} embedding and sequence features "
+                           f"(need >= 98%; missing e.g. {miss[:3]}); run embed_all and seqfeat first")
+    emb = np.stack([np.load(f"{EMB_DIR}/{r['acc']}__n{n_windows}.npy") for r in ok])
+    sf = np.stack([np.load(f"{FEAT_DIR}/{r['acc']}__seqfeat_n{n_windows}.npy") for r in ok])  # (G, 2, 260)
+    features = {"evo2": emb,
+                "kmer_genome": np.stack([core.tetra_frequencies(f[0]) for f in sf]),
+                "kmer_windows": np.stack([core.tetra_frequencies(f[1]) for f in sf]),
+                "gc": np.array([[core.gc_from_counts(f[0])] for f in sf])}
+    y = np.array([r["motility"] == "yes" for r in ok])
+    grid = list(core.LOPO_C_GRID)
+    models = {"evo2": {"features": "evo2", "grid": grid, "null": True},
+              "kmer_genome": {"features": "kmer_genome", "grid": grid, "null": True},
+              "kmer_windows": {"features": "kmer_windows", "grid": grid, "null": True},
+              "gc": {"features": "gc", "grid": grid, "null": True},
+              "evo2_C1": {"features": "evo2", "grid": [1.0], "null": False}}  # the pre-specified pipeline, untuned
+    compare = [("evo2", "kmer_genome"), ("evo2", "kmer_windows"), ("evo2", "gc"), ("evo2_C1", "kmer_genome")]
+    with threadpool_limits(limits=1):  # one BLAS thread per worker thread, no oversubscription
+        res = core.lopo_evaluate(features, y, [r["phylum"] for r in ok], [r["genus"] for r in ok], models, compare,
+                                 n_perm=n_perm, n_boot=n_boot, seed=seed, n_jobs=8)
+    seen = sf[:, 1, 256:].sum(1) / sf[:, 0, 256:].sum(1)
+    res.update({"n_genomes": len(ok), "n_requested": len(rows), "missing": [r["acc"] for r in rows if r not in ok],
+                "median_fraction_of_genome_seen_by_evo2": float(np.median(seen)),
+                "median_genome_mb": float(np.median(sf[:, 0, 256:].sum(1)) / 1e6), "n_windows": n_windows})
+    return res
 
 
 # ---------------------------------------------------------------------------
@@ -764,8 +843,12 @@ def sweep(panel: str = PANEL, n_genomes: int = 200, depths: str = "10,25,50,100"
 
 @app.local_entrypoint()
 def embed_all(panel: str = PANEL, n_windows: int = 0, max_usd: float = 25.0, batch_size: int = 1,
-              limit: int = 0, reports: str = "reports", dry_run: bool = False, skip_checks: bool = False):
-    """Production run over the whole panel at one depth. Resumable: existing checkpoints are skipped."""
+              limit: int = 0, reports: str = "reports", dry_run: bool = False, skip_checks: bool = False,
+              phyla: str = ""):
+    """Production run at one depth. Resumable: existing checkpoints are skipped.
+
+    --phyla restricts to a comma-separated list of GTDB phyla (exact names); default is the whole panel.
+    """
     if n_windows <= 0:
         import json
 
@@ -775,6 +858,13 @@ def embed_all(panel: str = PANEL, n_windows: int = 0, max_usd: float = 25.0, bat
         n_windows = json.load(open(p))["selected_depth"]
         print(f"using sweep-selected depth {n_windows}")
     rows = _read_panel(panel)
+    if phyla:
+        keep = {x.strip() for x in phyla.split(",") if x.strip()}
+        unknown = keep - {r["gtdb_phylum"] for r in rows}
+        if unknown:
+            raise SystemExit(f"unknown phyla {sorted(unknown)}; names are GTDB phyla exactly as in the panel")
+        rows = [r for r in rows if r["gtdb_phylum"] in keep]
+        print("phyla: " + ", ".join(f"{p} {sum(r['gtdb_phylum'] == p for r in rows)}" for p in sorted(keep)) + f"  ({len(rows)} genomes)")
     if limit:
         rows = rows[:limit]
     have = _existing("embeddings")
@@ -909,7 +999,8 @@ def _first_at_least(xs, ys, thr):
 
 @app.local_entrypoint()
 def reliability(panel: str = PANEL, genomes: str = "reports/tables/evo2_sweep_genomes.tsv", seed: int = 20260929,
-                reps: int = 10, n_boot: int = 100, reports: str = "reports", traits_only: bool = False):
+                reps: int = 10, n_boot: int = 100, reports: str = "reports", traits_only: bool = False,
+                within_phylum: bool = False):
     """Sampling-depth reliability curve + which trait has the most within-phylum variance. CPU only, no GPU."""
     import json
     import statistics as st
@@ -919,7 +1010,7 @@ def reliability(panel: str = PANEL, genomes: str = "reports/tables/evo2_sweep_ge
         return
     with open(genomes, newline="") as f:
         rows = [{"acc": r["acc"], "motility": r["motility"], "group": r["group"]} for r in csv.DictReader(f, delimiter="\t")]
-    d = reliability_run.remote(rows, seed, reps, n_boot)
+    d = reliability_run.remote(rows, seed, reps, n_boot, within_phylum)
     Path(f"{reports}/tables").mkdir(parents=True, exist_ok=True)
     Path(f"{reports}/tables/evo2_depth_reliability.json").write_text(json.dumps(d, indent=2, sort_keys=True, default=str) + "\n")
 
@@ -928,6 +1019,9 @@ def reliability(panel: str = PANEL, genomes: str = "reports/tables/evo2_sweep_ge
     print(f"\n=== SAMPLING-DEPTH RELIABILITY: {d['n_genomes']} genomes, pool of {d['pool_n']} evenly spaced windows each ===")
     print(f"  mean cosine between different genomes:  raw {cos['raw']:.4f}  ->  mean-centred {cos['centred']:.4f}  ->  centred + per-dim scaled {cos['centred_scaled']:.4f}")
     print("  (variances below are computed in that centred, scaled space; the shared component is removed)")
+    if c.get("within_groups"):
+        print(f"  WITHIN-PHYLUM MODE: genomes are centred and scaled within each of {c['n_groups']} pooled groups, so 'between' is the variation")
+        print("  among genomes of the SAME phylum, the differences a within-phylum comparison has to resolve.")
     print(f"  per-window variance {c['per_window_variance']:.0f}, between-genome variance {c['between_full']:.0f} (sum over {c['dims_effective']:.0f} standardised dims)")
     print(f"\n  {'n':>4} | {'within/between':>26} | {'random-subset':>13} | {'reliability':>24} | {'GC Spearman':>11} {'GC R2':>7} | {'motility AUC (ungrouped)':>24}")
     sysm, rnd, mod, an = c["systematic"], c["random"], c["model"], d["anchors"]
@@ -963,3 +1057,86 @@ def reliability(panel: str = PANEL, genomes: str = "reports/tables/evo2_sweep_ge
     f = core.flattens_at(xs, ys, True, noise=max(noise("motility_auc"), max(st.mean(an[n]["motility_cv_sd"]) for n in grid)))
     print(f"    motility AUC (ungrouped): " + ("no depth effect detectable (flat within noise)" if f["flat_within_noise"] else f"n = {f['n']}") + f"   (n=1: {ys[0]:.3f}, best: {max(ys):.3f})")
     print(f"\nsaved {reports}/tables/evo2_depth_reliability.json and trait_within_phylum_variance.tsv  (CPU only, no GPU spend)")
+
+
+def _ci(x: dict) -> str:
+    return f"{x['auc']:.3f} [{x['ci'][0]:.3f},{x['ci'][1]:.3f}]"
+
+
+@app.local_entrypoint()
+def lopo(panel: str = PANEL, phyla: str = "Pseudomonadota,Bacillota,Actinomycetota,Bacteroidota", n_windows: int = 10,
+         n_perm: int = 50, n_boot: int = 1000, seed: int = 20260929, batch: int = 40, reports: str = "reports"):
+    """Motility, leave-one-phylum-out, AUC scored WITHIN the held-out phylum: Evo 2 vs composition baselines. CPU only."""
+    import json
+
+    keep = [x.strip() for x in phyla.split(",") if x.strip()]
+    rows = [{"acc": r["ncbi_assembly_accession"], "phylum": r["gtdb_phylum"], "genus": r["gtdb_genus"], "motility": r["motility"]}
+            for r in _read_panel(panel) if r["gtdb_phylum"] in keep]
+    have = _existing("embeddings")
+    emb = [r for r in rows if f"{r['acc']}__n{n_windows}.npy" in have and f"{r['acc']}__meta.json" in have]
+    print(f"{len(emb)} of {len(rows)} genomes in {len(keep)} phyla have a depth-{n_windows} embedding on the volume")
+    if len(emb) < 0.98 * len(rows):
+        raise SystemExit(f"Need >= 98% embedded. Run: modal run -m src.evo2_modal::embed_all --n-windows {n_windows} --phyla {','.join(keep)}")
+
+    feats_have = _existing("features")
+    todo = [r["acc"] for r in emb if f"{r['acc']}__seqfeat_n{n_windows}.npy" not in feats_have]
+    print(f"sequence features: {len(emb) - len(todo)} cached, {len(todo)} to compute (CPU)")
+    errs = []
+    for res in seqfeat_batch.map([todo[i:i + batch] for i in range(0, len(todo), batch)], kwargs={"n_windows": n_windows}) if todo else []:
+        errs += res["errors"]
+    if errs:
+        print(f"  {len(errs)} genomes failed feature extraction, e.g. {errs[0][0]}: {errs[0][1].strip().splitlines()[-1]}")
+
+    print(f"evaluating (leave-one-phylum-out, {n_perm} shuffles, {n_boot} genus-cluster bootstraps)...")
+    d = lopo_run.remote(emb, n_windows, n_perm, n_boot, seed)
+    Path(f"{reports}/tables").mkdir(parents=True, exist_ok=True)
+    Path(f"{reports}/tables/evo2_lopo_motility.json").write_text(json.dumps(d, indent=2, sort_keys=True) + "\n")
+
+    names = {"evo2": "Evo 2", "kmer_genome": "k-mer(genome)", "kmer_windows": "k-mer(windows)", "gc": "GC only"}
+    print(f"\n=== MOTILITY, LEAVE-ONE-PHYLUM-OUT: {d['n_genomes']} of {d['n_requested']} genomes, depth {d['n_windows']} ===")
+    print(f"  AUC is scored WITHIN the held-out phylum, trained on the other {len(d['phyla']) - 1}. Brackets: 95% genus-cluster bootstrap CI.")
+    print(f"  Evo 2 saw {d['median_fraction_of_genome_seen_by_evo2']:.1%} of a median {d['median_genome_mb']:.1f} Mb genome; "
+          "k-mer(genome) sees all of it, k-mer(windows) sees only the windows Evo 2 saw.")
+    print("  Floor: a constant score (within-phylum majority class) ties every pair, so its within-phylum AUC is exactly 0.500.")
+    print(f"\n  {'held-out phylum':<16} {'n':>4} {'motile':>6} {'genera':>6} | " + " | ".join(f"{v:^21}" for v in names.values()) + " | floor")
+    for h in d["phyla"]:
+        p = d["per_phylum"][h]
+        print(f"  {h:<16} {p['n']:>4} {p['prevalence']:>6.0%} {p['n_genera']:>6} | " + " | ".join(f"{_ci(p['models'][k]):^21}" for k in names) + " | 0.500")
+    print(f"  {'MACRO MEAN':<16} {'':>4} {'':>6} {'':>6} | " + " | ".join(f"{_ci(d['macro']['models'][k]):^21}" for k in names) + " | 0.500")
+
+    print("\n  PAIRED DIFFERENCE IN AUC (same genera resampled for both models; 95% CI; share of resamples where Evo 2 is ahead)")
+    for pair in ("evo2 - kmer_genome", "evo2 - kmer_windows", "evo2 - gc", "evo2_C1 - kmer_genome"):
+        cells = []
+        for h in d["phyla"]:
+            x = d["per_phylum"][h]["deltas"][pair]
+            cells.append(f"{h[:6]} {x['delta']:+.3f} [{x['ci'][0]:+.3f},{x['ci'][1]:+.3f}]")
+        m = d["macro"]["deltas"][pair]
+        print(f"  {pair:<22} " + " | ".join(cells) + f" || MACRO {m['delta']:+.3f} [{m['ci'][0]:+.3f},{m['ci'][1]:+.3f}] ahead in {m['share_boot_positive']:.0%}")
+
+    print("\n  SHUFFLE NULL (labels permuted within each phylum, model refit; mean ± sd of the null AUC, and p = P(null >= observed))")
+    for k in names:
+        cells = []
+        for h in d["phyla"]:
+            x = d["per_phylum"][h]["models"][k]["null"]
+            cells.append(f"{h[:6]} {x['mean']:.3f}±{x['sd']:.3f} p={x['p']:.3f}")
+        m = d["macro"]["models"][k]["null"]
+        print(f"  {names[k]:<15} " + " | ".join(cells) + f" || MACRO {m['mean']:.3f}±{m['sd']:.3f} p={m['p']:.3f}")
+
+    print("\n  REGULARISATION (C chosen by inner leave-one-phylum-out over the training phyla) and the untuned pre-specified pipeline")
+    for k in names:
+        print(f"  {names[k]:<15} chosen C: " + ", ".join(f"{h[:6]} {d['per_phylum'][h]['models'][k]['C']:g}" for h in d["phyla"]))
+    print("  Evo 2, C=1 fixed:  " + ", ".join(f"{h[:6]} {d['per_phylum'][h]['models']['evo2_C1']['auc']:.3f}" for h in d["phyla"]) +
+          f" || macro {d['macro']['models']['evo2_C1']['auc']:.3f}")
+
+    m = d["macro"]["deltas"]["evo2 - kmer_genome"]
+    wins = sum(d["per_phylum"][h]["deltas"]["evo2 - kmer_genome"]["ci"][0] > 0 for h in d["phyla"])
+    losses = sum(d["per_phylum"][h]["deltas"]["evo2 - kmer_genome"]["ci"][1] < 0 for h in d["phyla"])
+    if m["ci"][0] > 0:
+        verdict = "Evo 2 beats whole-genome tetranucleotide frequencies"
+    elif m["ci"][1] < 0:
+        verdict = "Evo 2 does NOT beat tetranucleotide frequencies: they are ahead (this is the headline)"
+    else:
+        verdict = "no detectable difference between Evo 2 and whole-genome tetranucleotide frequencies (the CI spans zero)"
+    print(f"\n  VERDICT vs k-mer(genome): {verdict}. Macro ΔAUC {m['delta']:+.3f} [{m['ci'][0]:+.3f},{m['ci'][1]:+.3f}]; "
+          f"Evo 2 clearly ahead in {wins}/{len(d['phyla'])} phyla, clearly behind in {losses}/{len(d['phyla'])}.")
+    print(f"\nsaved {reports}/tables/evo2_lopo_motility.json  (CPU only, no GPU spend)")
