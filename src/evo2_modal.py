@@ -393,14 +393,8 @@ def evaluate_sweep(rows: list[dict], depths: list[int], n_splits: int) -> dict:
     return _plain_call(_evaluate_sweep, rows, depths, n_splits)
 
 
-def _evaluate_sweep(rows: list[dict], depths: list[int], n_splits: int) -> dict:
-    """Per-depth GroupKFold AUC on `motility`, plus timings from the per-genome meta files."""
-    import json
-
-    import numpy as np
-
-    out_vol.reload()
-    # Precondition, checked before any work: every genome must have all its depth .npy files and a meta file.
+def _require_embedded(rows: list[dict], depths: list[int]) -> None:
+    """Precondition, checked before any work: every genome has all its depth .npy files and a meta file."""
     lacking = [r["acc"] for r in rows
                if not (os.path.exists(f"{EMB_DIR}/{r['acc']}__meta.json")
                        and all(os.path.exists(f"{EMB_DIR}/{r['acc']}__n{n}.npy") for n in depths))]
@@ -408,6 +402,16 @@ def _evaluate_sweep(rows: list[dict], depths: list[int], n_splits: int) -> dict:
         raise RuntimeError(f"{len(rows) - len(lacking)} of {len(rows)} genomes embedded: {len(lacking)} lack an .npy "
                            f"for depths {depths} or a __meta.json on the volume (e.g. {lacking[:3]}). "
                            "The embed stage did not produce these; nothing was evaluated.")
+
+
+def _evaluate_sweep(rows: list[dict], depths: list[int], n_splits: int) -> dict:
+    """Per-depth GroupKFold AUC on `motility`, plus timings from the per-genome meta files."""
+    import json
+
+    import numpy as np
+
+    out_vol.reload()
+    _require_embedded(rows, depths)
     y = np.array([r["motility"] == "yes" for r in rows])
     groups = np.array([r["group"] for r in rows])
     bad, results, timing = [], [], {}
@@ -434,6 +438,90 @@ def _evaluate_sweep(rows: list[dict], depths: list[int], n_splits: int) -> dict:
             "median_longest_contig_kb": float(np.median([m["longest_contig"] for m in ms]) / 1e3),
             "median_contigs_used": float(np.median([m["n_contigs_used"] for m in ms])),
             "median_frac_of_genome_usable": float(np.median([m["usable_len"] / m["total_len"] for m in ms]))}
+
+
+@app.function(image=cpu_image, volumes={OUT_DIR: out_vol}, timeout=3600, cpu=4, memory=8192)
+def diagnose_sweep(rows: list[dict], depths: list[int], n_splits: int, n_perm: int, seed: int) -> dict:
+    return _plain_call(_diagnose_sweep, rows, depths, n_splits, n_perm, seed)
+
+
+def _fasta_ids(path: str) -> set:
+    import gzip
+
+    with gzip.open(path, "rt") as f:
+        return {line[1:].split()[0] for line in f if line.startswith(">")}
+
+
+def _diagnose_sweep(rows: list[dict], depths: list[int], n_splits: int, n_perm: int, seed: int) -> dict:
+    """CPU-only audit of a sweep result: pairing, positive class, fold structure, label-shuffle nulls, GC baseline."""
+    import json
+    import random
+
+    import numpy as np
+    from scipy.stats import spearmanr
+
+    out_vol.reload()
+    _require_embedded(rows, depths)
+    accs = [r["acc"] for r in rows]
+    y = np.array([r["motility"] == "yes" for r in rows])
+    groups = np.array([r["group"] for r in rows])
+    top = max(depths)
+
+    # 1. alignment: every embedding is read by its own accession and traced back to its own genome
+    audit, ok_meta, ok_fasta, ok_pool = [], True, True, True
+    pick = set(random.Random(seed).sample(range(len(rows)), min(5, len(rows))))
+    for i, r in enumerate(rows):
+        acc = r["acc"]
+        meta = json.load(open(f"{EMB_DIR}/{acc}__meta.json"))
+        pool = np.load(f"{EMB_DIR}/{acc}__windows.npy")
+        ids = _fasta_ids(f"{GENOME_DIR}/{acc}.fna.gz")
+        w_ids = {w[0] for w in meta["windows"]}
+        m_ok, f_ok = meta["acc"] == acc, w_ids <= ids
+        p_ok = all(np.allclose(np.load(f"{EMB_DIR}/{acc}__n{n}.npy"), pool[core.subset_indices(meta["pool_n"], n)].mean(axis=0), atol=1e-5)
+                   for n in depths)
+        ok_meta, ok_fasta, ok_pool = ok_meta and m_ok, ok_fasta and f_ok, ok_pool and p_ok
+        if i in pick:
+            audit.append({"row": i, "acc": acc, "label_motility": r["motility"], "group": r["group"],
+                          "loaded": [f"{acc}__n{n}.npy" for n in depths], "meta_acc": meta["acc"],
+                          "meta_acc_matches": m_ok, "n_windows": len(meta["windows"]),
+                          "windows_lie_on_this_genomes_contigs": f_ok, "npy_equals_mean_of_its_windows": p_ok})
+    Xtop = np.stack([np.load(f"{EMB_DIR}/{a}__n{top}.npy") for a in accs])
+    Z = Xtop / np.linalg.norm(Xtop, axis=1, keepdims=True)
+    cos = Z @ Z.T
+    np.fill_diagonal(cos, -1)
+    alignment = {"n_checked": len(rows), "all_meta_acc_match": ok_meta, "all_windows_on_own_genome": ok_fasta,
+                 "all_npy_equal_mean_of_own_windows": ok_pool, "max_cosine_between_different_genomes": float(cos.max()),
+                 "n_distinct_vectors": int(len({tuple(np.round(v, 5)) for v in Xtop})), "audit": audit}
+
+    # labels
+    by_group = {g: {"n": int((groups == g).sum()), "prevalence_motile": float(y[groups == g].mean())} for g in sorted(set(groups))}
+
+    # GC (from the FASTA) : baseline feature, and target for the pairing control
+    gc = np.array([core.gc_content(f"{GENOME_DIR}/{a}.fna.gz") for a in accs])
+    gc_res = core.evaluate_depth(gc[:, None], y, groups, n_splits)
+    gc_folds = core.fold_report(gc[:, None], y, groups, n_splits)
+    gc_block = {"spearman_gc_vs_motility": float(spearmanr(gc, y).statistic), "cv": gc_res,
+                "fold_aucs": [f["auc"] for f in gc_folds["folds"]], "mean_gc": float(gc.mean()),
+                "gc_range": [float(gc.min()), float(gc.max())]}
+
+    per_depth = {}
+    for n in depths:
+        X = np.stack([np.load(f"{EMB_DIR}/{a}__n{n}.npy") for a in accs])
+        real = core.evaluate_depth(X, y, groups, n_splits)
+        nulls = {k: core.permutation_null(X, y, groups, n_splits, n_perm, seed, within_groups=(k == "within_group"), n_jobs=4)
+                 for k in ("global", "within_group")}
+        pct = {k: float(np.mean(np.asarray(v["values"]) <= real["auc_mean"])) for k, v in nulls.items()}
+        per_depth[f"n{n}"] = {
+            "real": real, "fold_report": core.fold_report(X, y, groups, n_splits),
+            "strong_regularisation_C0.01_auc": core.fold_report(X, y, groups, n_splits, C=0.01)["auc_mean"],
+            "ungrouped_stratified_cv": core.ungrouped_auc(X, y, n_splits, seed=seed),
+            "null_global": {k: v for k, v in nulls["global"].items() if k != "values"},
+            "null_within_group": {k: v for k, v in nulls["within_group"].items() if k != "values"},
+            "share_of_null_at_or_below_real": pct}
+    pairing = core.pairing_control(Xtop, gc, groups, n_splits, seed=seed)
+    return {"alignment": alignment, "labels": {"n": len(rows), "prevalence_motile": float(y.mean()), "by_group": by_group},
+            "positive_class": "y is a bool array (motility == 'yes'); classes_ order is reported per depth in fold_report.classes",
+            "gc_baseline": gc_block, "pairing_control": {"depth": top, **pairing}, "depths": per_depth, "n_perm": n_perm}
 
 
 # ---------------------------------------------------------------------------
@@ -651,3 +739,85 @@ def embed_all(panel: str = PANEL, n_windows: int = 0, max_usd: float = 25.0, bat
         _write_tsv(f"{reports}/tables/evo2_embed_all_failures.tsv", allf, ["acc", "error"])
     print(f"done: {len(todo) - len(fails)} embedded, {len(allf)} failed (see reports/tables/evo2_embed_all_failures.tsv); "
           f"GPU spend ~${spent:.2f}. Fetch with: modal volume get evo2-embeddings embeddings ./evo2_embeddings")
+
+
+def _fmt_folds(fr: dict) -> str:
+    lines = [f"  {'fold':>4} {'held-out phyla':<52} {'n_test':>6} {'prev_train':>10} {'prev_test':>9} {'AUC':>6} {'mean P(motile) yes/no':>22}"]
+    for f in fr["folds"]:
+        auc = f"{f['auc']:.3f}" if f["auc"] == f["auc"] else "  n/a"
+        pm = (f"{f['mean_p_motile_actual_yes']:.2f} / {f['mean_p_motile_actual_no']:.2f}"
+              if f["auc"] == f["auc"] else "n/a")
+        lines.append(f"  {f['fold']:>4} {', '.join(f['test_groups'])[:52]:<52} {f['n_test']:>6} {f['prev_train']:>10.2f} "
+                     f"{f['prev_test']:>9.2f} {auc:>6} {pm:>22}")
+    return "\n".join(lines)
+
+
+@app.local_entrypoint()
+def diagnose(panel: str = PANEL, genomes: str = "reports/tables/evo2_sweep_genomes.tsv",
+             depths: str = "10,25,50,100", n_perm: int = 50, n_splits: int = 5, seed: int = 20260929,
+             reports: str = "reports"):
+    """Audit a finished sweep: pairing, positive class, fold structure, label-shuffle nulls, GC baseline.
+
+    CPU only (no GPU, no re-embedding): reads the checkpoints already on the volume.
+    """
+    import json
+
+    ds = sorted({int(x) for x in depths.split(",")})
+    with open(genomes, newline="") as f:
+        sweep_rows = list(csv.DictReader(f, delimiter="\t"))
+    rows = [{"acc": r["acc"], "motility": r["motility"], "group": r["group"]} for r in sweep_rows]
+
+    # Label provenance, re-derived from the panel TSV independently of the sweep's own table.
+    pan = _read_panel(panel)
+    grp = dict(zip([r["ncbi_assembly_accession"] for r in pan], core.pool_groups([r["gtdb_phylum"] for r in pan])))
+    lab = {r["ncbi_assembly_accession"]: r["motility"] for r in pan}
+    bad = [r["acc"] for r in rows if lab.get(r["acc"]) != r["motility"] or grp.get(r["acc"]) != r["group"]]
+    print(f"label cross-check against {panel}, by accession: {len(rows) - len(bad)}/{len(rows)} match" + (f"  MISMATCH {bad[:5]}" if bad else ""))
+
+    d = diagnose_sweep.remote(rows, ds, n_splits, n_perm, seed)
+    Path(f"{reports}/tables").mkdir(parents=True, exist_ok=True)
+    Path(f"{reports}/tables/evo2_sweep_diagnostics.json").write_text(json.dumps(d, indent=2, sort_keys=True) + "\n")
+
+    a = d["alignment"]
+    print("\n=== 1. LABEL ALIGNMENT (embedding <-> accession <-> label) ===")
+    print(f"  {a['n_checked']} genomes: meta.acc == accession: {a['all_meta_acc_match']} | all windows lie on this genome's own contigs: "
+          f"{a['all_windows_on_own_genome']} | every depth .npy == mean of its own windows: {a['all_npy_equal_mean_of_own_windows']}")
+    print(f"  distinct embedding vectors: {a['n_distinct_vectors']}/{a['n_checked']} | max cosine between two different genomes: "
+          f"{a['max_cosine_between_different_genomes']:.4f}")
+    for x in a["audit"]:
+        print(f"  row {x['row']:>3} {x['acc']}  label={x['label_motility']:<3} group={x['group']:<18} loaded {x['loaded'][0]}..{x['loaded'][-1]} "
+              f"(meta_acc {x['meta_acc']}, {x['n_windows']} windows on own contigs: {x['windows_lie_on_this_genomes_contigs']})")
+    pc = d["pairing_control"]
+    print(f"  pairing control (independent of motility): predict each genome's GC from its depth-{pc['depth']} embedding, "
+          f"out-of-phylum Spearman r = {pc['spearman_r']:.3f}  (same test with GC shuffled across genomes: {pc['shuffled_pairing_r']:.3f})")
+
+    top = f"n{max(ds)}"
+    fr = d["depths"][top]["fold_report"]
+    print("\n=== 2. POSITIVE CLASS ===")
+    print(f"  y = (motility == 'yes') as bool; fitted classes_ = {fr['classes']}, so predict_proba[:, 1] = P({fr['classes'][1]}) = P(motile), "
+          "the same array is used at fit and at score time.")
+    diffs = [abs(f['auc'] - f['auc_manual']) for f in fr['folds'] if f['auc'] == f['auc']]
+    print(f"  sklearn roc_auc vs independent rank-statistic AUC (positive = motile): max |difference| over folds = {max(diffs):.2e}")
+
+    print("\n=== 3. FOLD STRUCTURE (GroupKFold by pooled phylum) ===")
+    print(f"  overall motility prevalence {d['labels']['prevalence_motile']:.2f}; per phylum: " +
+          ", ".join(f"{g} {v['prevalence_motile']:.2f} (n={v['n']})" for g, v in d['labels']['by_group'].items()))
+    for n in (min(ds), max(ds)):
+        print(f"  depth {n}:")
+        print(_fmt_folds(d["depths"][f"n{n}"]["fold_report"]))
+
+    print("\n=== 4. SHUFFLED-LABEL NULLS vs REAL (same folds; mean AUC over folds) ===")
+    print(f"  {'depth':>5} {'real':>7} | {'global shuffle':>26} | {'shuffle within phylum':>26} | {'ungrouped CV':>12} | {'C=0.01':>7}")
+    for n in ds:
+        x = d["depths"][f"n{n}"]
+        g, w = x["null_global"], x["null_within_group"]
+        print(f"  {n:>5} {x['real']['auc_mean']:>7.3f} | {g['mean']:.3f} ± {g['sd']:.3f} [{g['q05']:.2f},{g['q95']:.2f}] | "
+              f"{w['mean']:.3f} ± {w['sd']:.3f} [{w['q05']:.2f},{w['q95']:.2f}] | {x['ungrouped_stratified_cv']['auc_mean']:>12.3f} | "
+              f"{x['strong_regularisation_C0.01_auc']:>7.3f}")
+    print(f"  ({d['n_perm']} permutations each; brackets are the 5th-95th percentile of the null)")
+
+    g = d["gc_baseline"]
+    print("\n=== 5. GC-CONTENT-ONLY BASELINE (one feature, identical CV) ===")
+    print(f"  GC range {g['gc_range'][0]:.2f}-{g['gc_range'][1]:.2f}; Spearman(GC, motile) = {g['spearman_gc_vs_motility']:.3f}; "
+          f"grouped-CV AUC = {g['cv']['auc_mean']:.3f} ± {g['cv']['auc_std']:.3f}; per-fold AUCs " + ", ".join(f"{v:.2f}" for v in g['fold_aucs']))
+    print(f"\nsaved {reports}/tables/evo2_sweep_diagnostics.json  (CPU only, no GPU spend)")

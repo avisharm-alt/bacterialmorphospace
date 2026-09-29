@@ -476,3 +476,90 @@ def test_plain_call_keeps_the_original_traceback():
     with pytest.raises(RuntimeError) as ei:
         m._plain_call(deep)
     assert "the real cause" in str(ei.value) and "in deep" in str(ei.value) and "Traceback" in str(ei.value)
+
+
+# --- diagnostics: run the real remote code path against a fake volume --------------------------------
+def _fake_volume(tmp_path, misalign=False, n=36, dim=48, seed=0):
+    """Synthetic genomes whose embeddings really encode GC, plus phylum structure. Returns the sweep rows."""
+    import json
+    import random
+
+    np = pytest.importorskip("numpy")
+    rng, py = np.random.default_rng(seed), random.Random(seed)
+    emb, gen = tmp_path / "embeddings", tmp_path / "genomes"
+    emb.mkdir(), gen.mkdir()
+    phyla = ["A", "B", "C", "D", "E", "F"]
+    centres = {p: rng.normal(size=dim) for p in phyla}
+    gc_dir = rng.normal(size=dim)
+    rows, vectors = [], {}
+    for i in range(n):
+        acc, ph = f"GCF_{i:09d}.1", phyla[i % 6]
+        gc_target = 0.3 + 0.4 * rng.random()
+        contigs = {f"ctg{k}": "".join("GC" if py.random() < gc_target else "AT" for _ in range(6000)) for k in range(3)}
+        with gzip.open(gen / f"{acc}.fna.gz", "wt") as f:
+            for cid, s in contigs.items():
+                f.write(f">{cid} x\n{s}\n")
+        wins = [[f"ctg{k % 3}", 0] for k in range(100)]
+        pool = np.stack([centres[ph] + 8 * (gc_target - .5) * gc_dir + 0.3 * rng.normal(size=dim) for _ in range(100)]).astype(np.float32)
+        vectors[acc] = pool
+        rows.append({"acc": acc, "motility": "yes" if rng.random() < 0.5 else "no", "group": ph})
+        json.dump({"acc": acc, "pool_n": 100, "windows": wins}, open(emb / f"{acc}__meta.json", "w"))
+    accs = [r["acc"] for r in rows]
+    for j, acc in enumerate(accs):
+        src = vectors[accs[(j + 1) % n]] if misalign else vectors[acc]  # misalign: genome j gets genome j+1's embeddings
+        np.save(emb / f"{acc}__windows.npy", src)
+        for d in (10, 25):
+            np.save(emb / f"{acc}__n{d}.npy", src[core.subset_indices(100, d)].mean(axis=0).astype(np.float32))
+    return rows
+
+
+def _patched(monkeypatch, tmp_path):
+    m = _patch_embedder(monkeypatch, [])
+    monkeypatch.setattr(m, "EMB_DIR", str(tmp_path / "embeddings"))
+    monkeypatch.setattr(m, "GENOME_DIR", str(tmp_path / "genomes"))
+    monkeypatch.setattr(m, "out_vol", type("V", (), {"reload": staticmethod(lambda: None)})())
+    return m
+
+
+def test_diagnose_passes_when_embeddings_are_correctly_paired(tmp_path, monkeypatch):
+    pytest.importorskip("sklearn")
+    m = _patched(monkeypatch, tmp_path)
+    rows = _fake_volume(tmp_path)
+    d = m._diagnose_sweep(rows, [10, 25], 3, 4, 1)
+    a = d["alignment"]
+    assert a["all_meta_acc_match"] and a["all_windows_on_own_genome"] and a["all_npy_equal_mean_of_own_windows"]
+    assert len(a["audit"]) == 5 and all(x["windows_lie_on_this_genomes_contigs"] for x in a["audit"])
+    assert d["pairing_control"]["spearman_r"] > 0.6 > abs(d["pairing_control"]["shuffled_pairing_r"])
+    assert d["depths"]["n10"]["fold_report"]["classes"] == [False, True]
+    assert set(d["depths"]["n10"]) >= {"null_global", "null_within_group", "ungrouped_stratified_cv", "real"}
+    assert 0 <= d["gc_baseline"]["mean_gc"] <= 1
+
+
+def test_diagnose_detects_embeddings_paired_to_the_wrong_genome(tmp_path, monkeypatch):
+    """If rows were misaligned, the GC pairing control must collapse, even though every file 'exists'."""
+    pytest.importorskip("sklearn")
+    m = _patched(monkeypatch, tmp_path)
+    rows = _fake_volume(tmp_path, misalign=True)
+    d = m._diagnose_sweep(rows, [10], 3, 3, 1)
+    assert d["pairing_control"]["spearman_r"] < 0.35  # correct pairing gave > 0.6 on the same data
+
+
+def test_diagnose_entrypoint_prints_every_requested_section(tmp_path, monkeypatch, capsys):
+    pytest.importorskip("sklearn")
+    m = _patched(monkeypatch, tmp_path)
+    rows = _fake_volume(tmp_path)
+    canned = m._diagnose_sweep(rows, [10, 25], 3, 3, 1)
+    stub = type("F", (), {"remote": staticmethod(lambda *a, **k: canned)})()
+    monkeypatch.setattr(m, "diagnose_sweep", stub)
+    genomes = tmp_path / "g.tsv"
+    # the fixture has 6 species per phylum (< 10), so the panel's own pooling maps every phylum to "other"
+    genomes.write_text("acc\tgroup\tmotility\n" + "".join(f"{r['acc']}\tother\t{r['motility']}\n" for r in rows))
+    panel = tmp_path / "panel.tsv"
+    panel.write_text("ncbi_assembly_accession\tassembly_genbank\tgtdb_phylum\tmotility\n" + "".join(
+        f"{r['acc']}\t\t{r['group']}\t{r['motility']}\n" for r in rows))
+    m.diagnose.info.raw_f(panel=str(panel), genomes=str(genomes), depths="10,25", n_perm=3, n_splits=3, reports=str(tmp_path / "rep"))
+    out = capsys.readouterr().out
+    for needle in ("36/36 match", "LABEL ALIGNMENT", "pairing control", "POSITIVE CLASS", "classes_ = [False, True]",
+                   "FOLD STRUCTURE", "prev_test", "SHUFFLED-LABEL NULLS", "shuffle within phylum", "GC-CONTENT-ONLY"):
+        assert needle in out, needle
+    assert (tmp_path / "rep" / "tables" / "evo2_sweep_diagnostics.json").exists()

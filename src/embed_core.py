@@ -298,6 +298,146 @@ def evaluate_depth(X, y, groups, n_splits: int = 5) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Diagnostics for a suspicious result (all CPU-side, read the checkpoints only)
+# ---------------------------------------------------------------------------
+def _pipeline(C: float = 1.0):
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    return make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000, C=C))
+
+
+def manual_auc(y, score) -> float:
+    """AUC as the Mann-Whitney rank statistic for the POSITIVE = True class, independent of sklearn."""
+    import numpy as np
+    from scipy.stats import rankdata
+
+    y = np.asarray(y).astype(bool)
+    n1, n0 = int(y.sum()), int((~y).sum())
+    return float((rankdata(score)[y].sum() - n1 * (n1 + 1) / 2) / (n1 * n0))
+
+
+def fold_report(X, y, groups, n_splits: int = 5, C: float = 1.0) -> dict:
+    """Per-fold structure of the grouped CV, with the class sklearn treats as positive made explicit.
+
+    For each GroupKFold fold: the held-out groups, train/test sizes, motility prevalence in train and
+    test, the held-out AUC (sklearn and an independent rank-statistic implementation), and the mean
+    predicted P(positive) on the test fold. `classes` is the fitted classifier's class order, so
+    `predict_proba[:, 1]` is the probability of `classes[1]`.
+    """
+    import numpy as np
+    from sklearn.metrics import roc_auc_score
+    from sklearn.model_selection import GroupKFold
+
+    X, y, groups = np.asarray(X), np.asarray(y).astype(bool), np.asarray(groups)
+    folds, classes = [], None
+    for i, (tr, te) in enumerate(GroupKFold(n_splits=n_splits).split(X, y, groups)):
+        model = _pipeline(C).fit(X[tr], y[tr])
+        classes = [bool(c) for c in model.classes_]
+        row = {"fold": i, "test_groups": sorted(set(groups[te])), "n_train": len(tr), "n_test": len(te),
+               "prev_train": float(y[tr].mean()), "prev_test": float(y[te].mean())}
+        if len(set(y[te])) == 2:
+            p = model.predict_proba(X[te])[:, 1]
+            row.update(auc=float(roc_auc_score(y[te], p)), auc_manual=manual_auc(y[te], p),
+                       mean_p_motile=float(p.mean()), mean_p_motile_actual_yes=float(p[y[te]].mean()),
+                       mean_p_motile_actual_no=float(p[~y[te]].mean()))
+        else:
+            row.update(auc=float("nan"), auc_manual=float("nan"), mean_p_motile=float("nan"),
+                       mean_p_motile_actual_yes=float("nan"), mean_p_motile_actual_no=float("nan"))
+        folds.append(row)
+    aucs = [f["auc"] for f in folds if f["auc"] == f["auc"]]
+    return {"folds": folds, "classes": classes, "auc_mean": float(np.mean(aucs)) if aucs else float("nan"),
+            "prev_test_range": [min(f["prev_test"] for f in folds), max(f["prev_test"] for f in folds)]}
+
+
+def permutation_null(X, y, groups, n_splits: int = 5, n_perm: int = 50, seed: int = 0,
+                     within_groups: bool = False, n_jobs: int = 1) -> dict:
+    """Distribution of the grouped-CV mean AUC when labels carry no information about the embeddings.
+
+    within_groups=False shuffles labels over all genomes (also destroys the phylum-prevalence
+    structure). within_groups=True shuffles only inside each group, keeping every phylum's prevalence,
+    which is the right null for "is there signal beyond the phylum prior?". Both use the identical folds.
+    """
+    import numpy as np
+    from joblib import Parallel, delayed
+
+    rng = np.random.default_rng(seed)
+    X, y, groups = np.asarray(X), np.asarray(y).astype(bool), np.asarray(groups)
+    idx_by_group = [np.flatnonzero(groups == g) for g in sorted(set(groups))]
+    perms = []
+    for _ in range(n_perm):
+        yp = y.copy()
+        if within_groups:
+            for idx in idx_by_group:
+                yp[idx] = y[rng.permutation(idx)]
+        else:
+            yp = y[rng.permutation(len(y))]
+        perms.append(yp)
+    got = Parallel(n_jobs=n_jobs)(delayed(evaluate_depth)(X, yp, groups, n_splits) for yp in perms)
+    a = np.asarray([g["auc_mean"] for g in got if g["auc_mean"] == g["auc_mean"]])
+    return {"mean": float(a.mean()), "sd": float(a.std(ddof=1)), "q05": float(np.quantile(a, .05)),
+            "q95": float(np.quantile(a, .95)), "n": int(len(a)), "values": [float(v) for v in a]}
+
+
+def ungrouped_auc(X, y, n_splits: int = 5, repeats: int = 3, seed: int = 0, C: float = 1.0) -> dict:
+    """Same model, ordinary stratified CV (phyla shared between train and test), for contrast with GroupKFold."""
+    import numpy as np
+    from sklearn.metrics import roc_auc_score
+    from sklearn.model_selection import StratifiedKFold
+
+    X, y = np.asarray(X), np.asarray(y).astype(bool)
+    means = []
+    for r in range(repeats):
+        aucs = []
+        for tr, te in StratifiedKFold(n_splits, shuffle=True, random_state=seed + r).split(X, y):
+            aucs.append(roc_auc_score(y[te], _pipeline(C).fit(X[tr], y[tr]).predict_proba(X[te])[:, 1]))
+        means.append(float(np.mean(aucs)))
+    return {"auc_mean": float(np.mean(means)), "auc_sd_over_repeats": float(np.std(means, ddof=1)) if repeats > 1 else float("nan")}
+
+
+def gc_content(fasta_gz: str | Path) -> float:
+    """G+C fraction over all unambiguous bases of a gzipped FASTA (whole genome, every contig)."""
+    gc = at = 0
+    with gzip.open(fasta_gz, "rt") as f:
+        for line in f:
+            if line[0] != ">":
+                u = line.upper()
+                g, c, a, t = u.count("G"), u.count("C"), u.count("A"), u.count("T")
+                gc += g + c
+                at += a + t
+    if gc + at == 0:
+        raise ValueError(f"no ACGT bases in {fasta_gz}")
+    return gc / (gc + at)
+
+
+def pairing_control(X, gc, groups, n_splits: int = 5, alpha: float = 1000.0, seed: int = 0) -> dict:
+    """Do the embeddings belong to their genomes? Predict each genome's GC from its embedding.
+
+    Independent of the motility labels: genome GC is read from the FASTA, embeddings from the volume,
+    both keyed by accession. Evo 2 embeddings carry GC strongly, so correctly paired rows give a high
+    out-of-clade Spearman r; rows paired to the wrong genome give ~0. `shuffled_pairing_r` re-runs the
+    same model with the GC values permuted across genomes as the null.
+    """
+    import numpy as np
+    from scipy.stats import spearmanr
+    from sklearn.linear_model import Ridge
+    from sklearn.model_selection import GroupKFold, cross_val_predict
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    X, gc, groups = np.asarray(X), np.asarray(gc, dtype=float), np.asarray(groups)
+
+    def r_of(target):
+        pred = cross_val_predict(make_pipeline(StandardScaler(), Ridge(alpha=alpha)), X, target,
+                                 groups=groups, cv=GroupKFold(n_splits=n_splits))
+        return float(spearmanr(pred, target).statistic)
+
+    rng = np.random.default_rng(seed)
+    return {"spearman_r": r_of(gc), "shuffled_pairing_r": r_of(gc[rng.permutation(len(gc))])}
+
+
 def select_depth(results: list[dict]) -> dict:
     """One-standard-error rule: the smallest depth whose mean AUC is within one SE of the best depth's."""
     scored = [r for r in results if not math.isnan(r["auc_mean"])]
