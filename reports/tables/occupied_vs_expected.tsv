@@ -1,0 +1,13 @@
+map	null	N used	strata	species excluded (small strata)	cells	occupied	expected occupied (null mean)	null 95% interval	deficit	P(null ≤ observed)
+morphology panel (4)	global	3053	1	0	24	23	24.0	24–24	1.0	0.0004997501249375312
+morphology panel (4)	phylum	3041	17	12	24	23	23.7	23–24	0.7	0.3213393303348326
+morphology panel (4)	class	2996	27	57	24	23	23.1	22–24	0.1	0.6696651674162919
+morphology panel (4)	order	2878	53	175	24	23	22.6	21–24	-0.4	0.8325837081459271
+core panel (6 traits)	global	2580	1	0	216	90	117.3	110–124	27.3	9.999000099990002e-05
+core panel (6 traits)	phylum	2563	14	17	216	90	109.3	103–116	19.3	9.999000099990002e-05
+core panel (6 traits)	class	2522	24	58	216	89	102.6	96–109	13.6	9.999000099990002e-05
+core panel (6 traits)	order	2423	50	157	216	83	87.9	82–94	4.9	0.06669333066693331
+no-spore panel (5 traits)	global	5634	1	0	108	69	78.3	73–84	9.3	0.0015998400159984002
+no-spore panel (5 traits)	phylum	5617	18	17	108	69	78.3	73–83	9.3	9.999000099990002e-05
+no-spore panel (5 traits)	class	5568	32	66	108	69	75.8	71–81	6.8	0.006399360063993601
+no-spore panel (5 traits)	order	5416	66	218	108	66	69.4	65–74	3.4	0.11438856114388561

@@ -1,0 +1,231 @@
+# Single source of truth for paths, retrieval settings, trait mappings and bins.
+# Everything here is hashed into the run manifest, so a report can be traced back
+# to the exact binning it was produced with.
+
+[paths]
+raw = "data/raw"
+interim = "data/interim"
+final = "data/final"
+reports = "reports"
+
+# ---------------------------------------------------------------------------
+# Retrieval
+# ---------------------------------------------------------------------------
+[bacdive]
+# API v2. No authentication required (docs: https://api.bacdive.dsmz.de/).
+base_url = "https://api.bacdive.dsmz.de/v2"
+batch_size = 100                # documented limit: 100 IDs per /fetch call
+start_id = 1
+# The ID space has large gaps (observed: ~29.7k-~99k is empty), so an "N empty batches in a
+# row" stop rule silently truncates the crawl. We always sweep every batch up to max_id.
+max_id = 250000
+warn_if_max_found_within = 20000   # warn if strains are found this close to max_id (cap too low)
+workers = 3                     # parallel requests (kept modest: rate limits are undocumented)
+delay_seconds = 0.2
+timeout_seconds = 180
+max_retries = 8
+backoff_seconds = 5
+
+[gtdb]
+base_url = "https://data.gtdb.ecogenomic.org/releases/latest"
+metadata_file = "bac120_metadata.tsv.gz"
+version_file = "VERSION.txt"
+
+# ---------------------------------------------------------------------------
+# Trait normalisation
+#
+# Every categorical trait has two binnings:
+#   fine   raw BacDive value -> fine bin   (`fine_map`)
+#   coarse fine bin          -> coarse bin (`coarse_map`), chosen for statistical power
+# Raw values are always kept in `<trait>_raw`. Conflicting observations null the
+# normalised value (`<trait>_conflict` / `<trait>_fine_conflict`).
+# Keys of the maps are matched case-insensitively.
+# ---------------------------------------------------------------------------
+[traits.gram]
+# "variable" (Gram-variable, ~135 strains) is deliberately unmapped -> null.
+fine_levels = ["negative", "positive"]
+coarse_levels = ["negative", "positive"]
+unmapped = "null"
+[traits.gram.fine_map]
+negative = "negative"
+positive = "positive"
+[traits.gram.coarse_map]
+negative = "negative"
+positive = "positive"
+
+[traits.motility]
+fine_levels = ["no", "yes"]
+coarse_levels = ["no", "yes"]
+unmapped = "null"
+[traits.motility.fine_map]
+no = "no"
+yes = "yes"
+[traits.motility.coarse_map]
+no = "no"
+yes = "yes"
+
+[traits.spore]
+fine_levels = ["no", "yes"]
+coarse_levels = ["no", "yes"]
+unmapped = "null"
+[traits.spore.fine_map]
+no = "no"
+yes = "yes"
+[traits.spore.coarse_map]
+no = "no"
+yes = "yes"
+
+[traits.shape]
+fine_levels = ["rod", "coccus", "spiral", "filamentous", "other"]
+coarse_levels = ["rod", "coccus", "other"]
+# Values absent from fine_map go to "other" (the catch-all shape bin); each one is
+# listed in data/interim/unmapped_values.tsv so nothing is folded silently.
+unmapped = "other"
+[traits.shape.fine_map]
+"rod-shaped" = "rod"
+"coccus-shaped" = "coccus"
+"sphere-shaped" = "coccus"
+"diplococcus-shaped" = "coccus"
+"spiral-shaped" = "spiral"
+"vibrio-shaped" = "spiral"
+"curved-shaped" = "spiral"
+"helical-shaped" = "spiral"
+"filament-shaped" = "filamentous"
+"pleomorphic-shaped" = "other"
+"oval-shaped" = "other"
+"ovoid-shaped" = "other"
+"star-shaped" = "other"
+"ellipsoidal" = "other"
+"flask-shaped" = "other"
+"other" = "other"
+[traits.shape.coarse_map]
+rod = "rod"
+coccus = "coccus"
+spiral = "other"
+filamentous = "other"
+other = "other"
+
+[traits.oxygen]
+fine_levels = ["aerobe", "facultative", "microaerophile", "anaerobe"]
+coarse_levels = ["aerobe", "facultative", "anaerobe"]
+# Unmapped values become null and are listed in data/interim/unmapped_values.tsv. Seen in
+# BacDive 2026: "aerotolerant" (21) and "microaerotolerant" (5) are deliberately left unmapped:
+# an aerotolerant anaerobe fits none of aerobe/facultative/anaerobe without a judgement call.
+unmapped = "null"
+# coarse value "facultative" that came from a fine "microaerophile" is flagged in
+# the column `oxygen_microaerophile_folded`
+folded_flag_fine = "microaerophile"
+[traits.oxygen.fine_map]
+"aerobe" = "aerobe"
+"obligate aerobe" = "aerobe"
+"facultative anaerobe" = "facultative"
+"facultative aerobe" = "facultative"
+"microaerophile" = "microaerophile"
+"anaerobe" = "anaerobe"
+"obligate anaerobe" = "anaerobe"
+[traits.oxygen.coarse_map]
+aerobe = "aerobe"
+facultative = "facultative"
+microaerophile = "facultative"
+anaerobe = "anaerobe"
+
+# Numeric traits: the bin comes from the optimum where present, else the midpoint of
+# the positive-growth range (>=2 distinct positive values), else the single positive
+# growth value. `<trait>_bin_source` records which. Bins are [edge_i, edge_i+1).
+[traits.temperature]
+unit = "C"
+fine_edges = [15.0, 45.0, 80.0]
+fine_levels = ["psychro", "meso", "thermo", "hyperthermo"]
+coarse_levels = ["psychro", "meso", "thermo"]
+unmapped = "null"
+[traits.temperature.coarse_map]
+psychro = "psychro"
+meso = "meso"
+thermo = "thermo"
+hyperthermo = "thermo"
+
+[traits.ph]
+unit = "pH"
+fine_edges = [5.5, 8.5]
+fine_levels = ["acidophile", "neutrophile", "alkaliphile"]
+coarse_levels = ["acidophile", "neutrophile", "alkaliphile"]
+unmapped = "null"
+[traits.ph.coarse_map]
+acidophile = "acidophile"
+neutrophile = "neutrophile"
+alkaliphile = "alkaliphile"
+
+# ---------------------------------------------------------------------------
+# Panels
+# ---------------------------------------------------------------------------
+[panels]
+# core panel used for the occupancy analysis (216 coarse cells)
+core = ["gram", "shape", "motility", "spore", "oxygen", "temperature"]
+# second full panel without spore formation, the coverage bottleneck (108 coarse cells)
+no_spore = ["gram", "shape", "motility", "oxygen", "temperature"]
+morphology = ["gram", "shape", "motility", "spore"]
+# extra traits kept as columns and reported, but outside the occupancy analysis
+extra = ["ph", "halophily_level"]
+
+# ---------------------------------------------------------------------------
+# Genome matching
+# ---------------------------------------------------------------------------
+[matching]
+# BacDive designations (and GTDB ncbi_strain_identifiers) are split on these before
+# normalisation. BacDive itself uses commas ("DSM 46234, ATCC 21370, JCM 2849").
+delimiters = [",", ";", "/", "|", "="]
+# Culture-collection codes recognised in designations (after alias folding).
+collections = [
+  "DSM", "ATCC", "NCTC", "NCIMB", "CIP", "JCM", "LMG", "KCTC", "CCUG", "CGMCC",
+  "BCRC", "NBRC", "IFO", "VKM", "CECT", "CCM", "CFBP", "IAM", "MTCC", "NRRL",
+  "NCCB", "CBS", "UCC", "CCTCC", "KACC", "NZP", "PCM", "TISTR", "VTT", "ICMP",
+  "LMD", "BCCM", "MCCC", "HAMBI", "IMET", "CCAP", "IBRC",
+]
+# Designations with no recognised collection code ("bare", e.g. "BS 107") are only accepted
+# with taxon agreement: the BacDive genus equals the GTDB or NCBI genus of the genome, or one of
+# BacDive's NCBI tax IDs equals the genome's ncbi_taxid / ncbi_species_taxid. Exact comparisons.
+bare_requires_taxon_agreement = true
+
+[matching.aliases]
+DSMZ = "DSM"
+NCIB = "NCIMB"
+
+[matching.assembly_level_rank]
+"Complete Genome" = 4
+"Chromosome" = 3
+"Scaffold" = 2
+"Contig" = 1
+
+# ---------------------------------------------------------------------------
+# Occupancy analysis
+# ---------------------------------------------------------------------------
+[analysis]
+seed = 20260929
+n_perm_full = 10000        # permutations for the full-panel null
+n_perm_subset = 2000       # permutations for each 4-/5-trait subset
+min_expected_for_test = 3.0  # a cell is testable only if expected count >= this
+fdr_alpha = 0.05
+# Stratified nulls: trait columns are permuted only among species of the same GTDB taxon.
+strata_levels = ["phylum", "class", "order"]
+# Species in taxa with fewer species than this (in the analysed set) are excluded from that null
+# and reported, never silently kept: a 1-2 species stratum cannot be meaningfully shuffled.
+min_stratum_size = 5
+n_perm_phylum_occupancy = 1000
+# Extra diagnostic run only on cells that survive the order-level shuffle (not part of the survival
+# criterion): does a finer shuffle absorb them?
+survivor_diagnostic_levels = ["family"]
+
+# Known constraints, stated as positive controls rather than findings. The global null should flag
+# them; a phylogeny-aware null should not (their emptiness is explained by which clades carry which
+# traits). Identified after the first global-null run, so they are controls, not predictions.
+[[analysis.positive_controls]]
+panel = "core"
+name = "Gram-negative endospore-forming cocci"
+rationale = """Endospore formation is essentially restricted to Bacillota, which are overwhelmingly Gram-positive, and coccoid endospore formers are rare even there (Sporosarcina, itself motile and Gram-positive). The cell stacks three phylogenetic facts; an independence null cannot see any of them."""
+[analysis.positive_controls.cell]
+gram = "negative"
+shape = "coccus"
+motility = "no"
+spore = "yes"
+oxygen = "aerobe"
+temperature = "meso"

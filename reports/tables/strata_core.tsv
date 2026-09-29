@@ -1,0 +1,10 @@
+rank	min species per stratum	strata kept	strata excluded	species kept	species excluded
+phylum	2	18	6	2574	6
+phylum	5 (used)	14	10	2563	17
+phylum	10	10	14	2539	41
+class	2	38	21	2559	21
+class	5 (used)	24	35	2522	58
+class	10	14	45	2460	120
+order	2	93	48	2532	48
+order	5 (used)	50	91	2423	157
+order	10	36	105	2336	244

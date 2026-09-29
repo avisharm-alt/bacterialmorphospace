@@ -1,0 +1,3 @@
+panel	traits	cells	strains with genome	N species	N genera	species per cell	testable cells (global)	testable cells (phylum)	testable cells (class)	testable cells (order)	species kept by order null	order-level survivors
+core panel (6 traits)	gram + shape + motility + spore + oxygen + temperature	216	2630	2580	1235	11.9	69	67	62	52	2423	0
+no-spore panel (5 traits)	gram + shape + motility + oxygen + temperature	108	6184	5634	1927	52.2	54	59	53	49	5416	1

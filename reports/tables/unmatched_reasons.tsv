@@ -1,0 +1,6 @@
+reason	strains
+no_bacdive_assembly;designations_not_in_gtdb	74182
+no_bacdive_assembly;bare_designation_taxon_mismatch	3564
+no_bacdive_assembly;no_usable_designation	804
+bacdive_assembly_not_in_gtdb;designations_not_in_gtdb	654
+bacdive_assembly_not_in_gtdb;bare_designation_taxon_mismatch	148

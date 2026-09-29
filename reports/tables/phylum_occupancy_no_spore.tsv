@@ -1,0 +1,28 @@
+phylum	N	cells occupied	occupied (within-phylum null mean)	cells only this phylum occupies	cumulative occupied (this + larger phyla)	cumulative share of all occupied
+Pseudomonadota	2351	32	31.918	8	32	0.463768115942029
+Actinomycetota	1064	26	28.69	3	47	0.6811594202898551
+Bacillota	1063	41	55.478	8	61	0.8840579710144928
+Bacteroidota	868	24	22.546	0	61	0.8840579710144928
+Campylobacterota	43	11	10.89	1	62	0.8985507246376812
+Desulfobacterota	43	6	6.971	0	63	0.9130434782608695
+Deinococcota	36	10	11.257	1	65	0.9420289855072463
+Verrucomicrobiota	28	8	8.261	1	66	0.9565217391304348
+Acidobacteriota	26	5	5.181	0	66	0.9565217391304348
+Chloroflexota	21	12	13.825	1	68	0.9855072463768116
+Bacillota_I	15	3	3.349	0	68	0.9855072463768116
+Spirochaetota	15	6	8.493	1	69	1.0
+Fusobacteriota	9	3	2.873	0	69	1.0
+Aquificota	8	3	3.874	0	69	1.0
+Synergistota	8	4	4.37	0	69	1.0
+Thermotogota	8	2	2.0	0	69	1.0
+Planctomycetota	6	4	3.452	0	69	1.0
+Chrysiogenota	5	5	4.075	0	69	1.0
+Myxococcota	4	1		0	69	1.0
+Myxococcota_A	3	2		0	69	1.0
+Campylobacterota_A	2	2		0	69	1.0
+Gemmatimonadota	2	1		0	69	1.0
+Nitrospirota	2	1		0	69	1.0
+Armatimonadota	1	1		0	69	1.0
+Bdellovibrionota_B	1	1		0	69	1.0
+Dictyoglomota	1	1		0	69	1.0
+Thermosulfidibacterota	1	1		0	69	1.0

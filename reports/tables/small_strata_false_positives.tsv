@@ -1,0 +1,3 @@
+panel	cell	species in cell (all)	species in cell (kept)	order-null expected (kept)	q it would have had	would have been flagged	order sizes of its species
+core panel (6 traits)	gram=positive / shape=rod / motility=no / spore=yes / oxygen=anaerobe / temperature=thermo	4	0	3.8363690680720546	0.051994800519948	False	2, 2, 4, 4
+no-spore panel (5 traits)	gram=negative / shape=rod / motility=no / oxygen=anaerobe / temperature=thermo	15	0	3.4671738227916586	0.0593385105933851	False	1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 4, 4, 4, 4

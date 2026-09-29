@@ -1,0 +1,3 @@
+map	cell	order: expected	order: q	global: q
+gram + shape + motility + oxygen	gram=positive / shape=coccus / motility=yes / oxygen=anaerobe	5.636760831372265	0.010194902548725637	0.002570143499678732
+gram + shape + motility + oxygen + temperature	gram=positive / shape=coccus / motility=yes / oxygen=anaerobe / temperature=meso	5.441961761577867	0.010778922107789222	0.0017998200179982003

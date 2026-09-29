@@ -1,0 +1,18 @@
+# credentials / local config
+.env
+
+# cached API responses and large downloads (re-creatable via `python -m src.pipeline fetch`)
+data/raw/
+
+# large intermediates and outputs (re-creatable with `python -m src.pipeline all`;
+# checksums of the last run are in reports/run_manifest.json -> outputs, and in README.md)
+data/interim/*.parquet
+data/interim/unmatched_strains.tsv
+data/final/strains.parquet
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/

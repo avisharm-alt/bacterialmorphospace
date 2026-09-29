@@ -1,0 +1,217 @@
+gram	shape	motility	spore	oxygen	temperature	observed	observed_all_species	emptied_by_exclusion	expected	null_mean	p_empty_under_null	p_low	q_low	p_high	testable	emptier_than_chance	empty_beyond_chance
+negative	rod	no	no	aerobe	psychro	8	8	False	6.9917337835077475	6.9795	0.0	0.787021297870213	1.0	0.38736126387361264	True	False	False
+negative	rod	no	no	aerobe	meso	484	487	False	492.57857530494186	492.6773	0.0	0.13018698130186981	0.3668905836689058	0.8971102889711029	True	False	False
+negative	rod	no	no	aerobe	thermo	7	8	False	6.661541279680626	6.6618	0.0001	0.6661333866613338	1.0	0.5222477752224778	True	False	False
+negative	rod	no	no	facultative	psychro	0	0	False	1.0134648966086268	1.0187	0.3524	0.3524647535246475		1.0	False	False	False
+negative	rod	no	no	facultative	meso	40	40	False	48.62384630337539	48.6389	0.0	0.0491950804919508	0.18889875718310523	0.9682031796820318	True	False	False
+negative	rod	no	no	facultative	thermo	1	1	False	1.3644984913408729	1.3577	0.2338	0.5935406459354065		0.7662233776622338	False	False	False
+negative	rod	no	no	anaerobe	psychro	0	0	False	0.891650898445031	0.8981	0.377	0.37706229377062295		1.0	False	False	False
+negative	rod	no	no	anaerobe	meso	81	83	False	72.09152714486923	72.0247	0.0	0.9865013498650135	1.0	0.0230976902309769	True	False	False
+negative	rod	no	no	anaerobe	thermo	3	11	False	5.344363458023009	5.3329	0.0	0.11508849115088492	0.3397850691121364	0.9811018898110189	True	False	False
+negative	rod	no	yes	aerobe	psychro	0	0	False	0.056933561429301685	0.0591	0.9425	0.9425057494250575		1.0	False	False	False
+negative	rod	no	yes	aerobe	meso	6	6	False	8.959690425476513	8.9576	0.0	0.1556844315568443	0.4029597040295971	0.926007399260074	True	False	False
+negative	rod	no	yes	aerobe	thermo	1	1	False	0.3983560336056716	0.3955	0.6717	0.9401059894010599		0.32836716328367166	False	False	False
+negative	rod	no	yes	facultative	psychro	0	0	False	0.01034058288167879	0.0097	0.9904	0.9904009599040096		1.0	False	False	False
+negative	rod	no	yes	facultative	meso	2	2	False	2.93413067550224	2.9086	0.0441	0.43315668433156684		0.8103189681031897	False	False	False
+negative	rod	no	yes	facultative	thermo	1	1	False	0.22182879710171424	0.2169	0.8033	0.9807019298070193		0.1967803219678032	False	False	False
+negative	rod	no	yes	anaerobe	psychro	0	0	False	0.0706517539325375	0.0683	0.9318	0.9318068193180682		1.0	False	False	False
+negative	rod	no	yes	anaerobe	meso	2	2	False	7.358283964158808	7.3663	0.0	0.009499050094990502	0.04738097618809548	0.9988001199880012	True	True	False
+negative	rod	no	yes	anaerobe	thermo	1	2	False	2.2500830005561756	2.2278	0.0803	0.30816918308169183		0.9197080291970803	False	False	False
+negative	rod	yes	no	aerobe	psychro	11	11	False	9.581207247868107	9.6028	0.0	0.8058194180581941	1.0	0.34196580341965804	True	False	False
+negative	rod	yes	no	aerobe	meso	444	445	False	428.68325863030066	428.5269	0.0	0.9859014098590141	1.0	0.020097990200979902	True	False	False
+negative	rod	yes	no	aerobe	thermo	7	8	False	6.13447543101068	6.1519	0.0	0.7696230376962304	1.0	0.42325767423257676	True	False	False
+negative	rod	yes	no	facultative	psychro	4	4	False	2.3966302807714728	2.4084	0.0661	0.9218078192180782		0.2074792520747925	False	False	False
+negative	rod	yes	no	facultative	meso	84	84	False	79.81810914619012	79.8919	0.0	0.809019098090191	1.0	0.24877512248775122	True	False	False
+negative	rod	yes	no	facultative	thermo	3	5	False	1.7669471225705697	1.7632	0.1404	0.9175082491750824		0.2501749825017498	False	False	False
+negative	rod	yes	no	anaerobe	psychro	0	0	False	0.46724753664337026	0.4679	0.6204	0.6204379562043796		1.0	False	False	False
+negative	rod	yes	no	anaerobe	meso	30	33	False	39.78673734249775	39.84	0.0	0.010698930106989302	0.04738097618809548	0.9944005599440056	True	True	False
+negative	rod	yes	no	anaerobe	thermo	10	20	False	7.205067806806417	7.2026	0.0	0.9781021897810219	1.0	0.07169283071692831	True	False	False
+negative	rod	yes	yes	aerobe	psychro	0	0	False	0.10031126170023266	0.0966	0.9069	0.9069093090690931		1.0	False	False	False
+negative	rod	yes	yes	aerobe	meso	12	12	False	9.90440805297311	9.9405	0.0	0.8377162283771623	1.0	0.27077292270772924	True	False	False
+negative	rod	yes	yes	aerobe	thermo	2	2	False	0.4547622002691816	0.4425	0.6352	0.9913008699130087		0.0678932106789321	False	False	False
+negative	rod	yes	yes	facultative	psychro	0	0	False	0.025778168357392554	0.0222	0.978	0.978002199780022		1.0	False	False	False
+negative	rod	yes	yes	facultative	meso	7	7	False	3.9524114105963712	3.9638	0.0154	0.9631036896310369	1.0	0.0923907609239076	True	False	False
+negative	rod	yes	yes	facultative	thermo	0	0	False	0.2679122780392248	0.261	0.7679	0.7679232076792321		1.0	False	False	False
+negative	rod	yes	yes	anaerobe	psychro	0	0	False	0.06096390452023769	0.0609	0.9394	0.9394060593940606		1.0	False	False	False
+negative	rod	yes	yes	anaerobe	meso	10	13	False	6.863746038325103	6.8506	0.0007	0.9471052894710529	1.0	0.11678832116788321	True	False	False
+negative	rod	yes	yes	anaerobe	thermo	4	4	False	3.5503922927116984	3.5773	0.0098	0.7454254574542546	1.0	0.5052494750524947	True	False	False
+negative	coccus	no	no	aerobe	psychro	0	0	False	0.15012118048981468	0.1475	0.8613	0.8613138686131386		1.0	False	False	False
+negative	coccus	no	no	aerobe	meso	27	27	False	18.87557612651063	18.8519	0.0	0.9963003699630038	1.0	0.007899210078992101	True	False	False
+negative	coccus	no	no	aerobe	thermo	1	1	False	1.269004715907247	1.2875	0.2237	0.622937706229377		0.7763223677632237	False	False	False
+negative	coccus	no	no	facultative	psychro	0	0	False	0.029716645599797975	0.0276	0.9728	0.9728027197280272		1.0	False	False	False
+negative	coccus	no	no	facultative	meso	2	2	False	1.6337478384484974	1.6299	0.1805	0.7821217878212179		0.49375062493750627	False	False	False
+negative	coccus	no	no	facultative	thermo	0	0	False	0.0858661216852121	0.0869	0.9149	0.9149085091490851		1.0	False	False	False
+negative	coccus	no	no	anaerobe	psychro	0	0	False	0.012432101569917284	0.0125	0.9875	0.9875012498750125		1.0	False	False	False
+negative	coccus	no	no	anaerobe	meso	11	15	False	5.850087215736774	5.841	0.0	0.9997000299970003	1.0	0.0015998400159984002	True	False	False
+negative	coccus	no	no	anaerobe	thermo	0	0	False	0.350460521225757	0.3533	0.665	0.665033496650335		1.0	False	False	False
+negative	coccus	no	yes	aerobe	psychro	0	0	False	0.0016631970907372727	0.0015	0.9985	0.9985001499850015		1.0	False	False	False
+negative	coccus	no	yes	aerobe	meso	0	0	False	0.8448182717312824	0.8456	0.4266	0.4266573342665733		1.0	False	False	False
+negative	coccus	no	yes	aerobe	thermo	0	0	False	0.045776560117682864	0.0479	0.9529	0.952904709529047		1.0	False	False	False
+negative	coccus	no	yes	facultative	psychro	0	0	False	0.0003600976901882381	0.0002	0.9998	0.9998000199980002		1.0	False	False	False
+negative	coccus	no	yes	facultative	meso	0	0	False	0.375218945597919	0.373	0.684	0.684031596840316		1.0	False	False	False
+negative	coccus	no	yes	facultative	thermo	0	0	False	0.02853544629575794	0.0308	0.9694	0.9694030596940306		1.0	False	False	False
+negative	coccus	no	yes	anaerobe	psychro	0	0	False	0.005228368522573177	0.0054	0.9946	0.9946005399460054		1.0	False	False	False
+negative	coccus	no	yes	anaerobe	meso	0	0	False	0.8299776892266527	0.8075	0.4121	0.41215878412158785		1.0	False	False	False
+negative	coccus	no	yes	anaerobe	thermo	0	0	False	0.10670106935279003	0.1005	0.903	0.903009699030097		1.0	False	False	False
+negative	coccus	yes	no	aerobe	psychro	0	0	False	0.31420608512097564	0.3054	0.733	0.7330266973302669		1.0	False	False	False
+negative	coccus	yes	no	aerobe	meso	7	7	False	16.978151958930614	16.9894	0.0	0.0008999100089991	0.0050722200507222	0.9999000099990001	True	True	False
+negative	coccus	yes	no	aerobe	thermo	0	0	False	0.27898114209507974	0.2812	0.749	0.7490250974902509		1.0	False	False	False
+negative	coccus	yes	no	facultative	psychro	0	0	False	0.08083801850659093	0.0826	0.9193	0.9193080691930807		1.0	False	False	False
+negative	coccus	yes	no	facultative	meso	1	1	False	2.9075166284678526	2.8923	0.0442	0.19038096190380963		0.9558044195580442	False	False	False
+negative	coccus	yes	no	facultative	thermo	0	0	False	0.06066951367849621	0.0617	0.94	0.94000599940006		1.0	False	False	False
+negative	coccus	yes	no	anaerobe	psychro	0	0	False	0.01312754316956528	0.0131	0.987	0.987001299870013		1.0	False	False	False
+negative	coccus	yes	no	anaerobe	meso	2	2	False	3.877572814715791	3.892	0.0025	0.15598440155984403	0.4029597040295971	0.9703029697030296	True	False	False
+negative	coccus	yes	no	anaerobe	thermo	0	0	False	0.23955630619760543	0.2332	0.7779	0.777922207779222		1.0	False	False	False
+negative	coccus	yes	yes	aerobe	psychro	0	0	False	0.0035175038372389283	0.0038	0.9962	0.9962003799620038		1.0	False	False	False
+negative	coccus	yes	yes	aerobe	meso	1	1	False	0.9975271517105333	0.9975	0.3601	0.7344265573442655		0.6399360063993601	False	False	False
+negative	coccus	yes	yes	aerobe	thermo	0	0	False	0.06429828511625238	0.0665	0.9347	0.9347065293470653		1.0	False	False	False
+negative	coccus	yes	yes	facultative	psychro	0	0	False	0.0009023876750921973	0.001	0.999	0.999000099990001		1.0	False	False	False
+negative	coccus	yes	yes	facultative	meso	0	0	False	0.53443179176924	0.5396	0.5772	0.5772422757724227		1.0	False	False	False
+negative	coccus	yes	yes	facultative	thermo	0	0	False	0.04124311871291444	0.0406	0.9603	0.9603039696030397		1.0	False	False	False
+negative	coccus	yes	yes	anaerobe	psychro	0	0	False	0.0045993251247259375	0.0044	0.9956	0.9956004399560044		1.0	False	False	False
+negative	coccus	yes	yes	anaerobe	meso	0	0	False	0.6641560304996517	0.6698	0.4885	0.48855114488551143		1.0	False	False	False
+negative	coccus	yes	yes	anaerobe	thermo	0	0	False	0.09003251176187443	0.0939	0.909	0.909009099090091		1.0	False	False	False
+negative	other	no	no	aerobe	psychro	0	0	False	0.23282129873915014	0.2281	0.7927	0.7927207279272073		1.0	False	False	False
+negative	other	no	no	aerobe	meso	21	22	False	19.309369384128168	19.2936	0.0	0.7522247775222478	1.0	0.35396460353964604	True	False	False
+negative	other	no	no	aerobe	thermo	1	1	False	0.7729675862143142	0.765	0.4094	0.8474152584741526		0.5906409359064093	False	False	False
+negative	other	no	no	facultative	psychro	0	0	False	0.04282766425851536	0.0432	0.9573	0.9573042695730427		1.0	False	False	False
+negative	other	no	no	facultative	meso	3	3	False	2.7827302576791446	2.773	0.0492	0.7056294370562943		0.5408459154084592	False	False	False
+negative	other	no	no	facultative	thermo	1	1	False	0.5447286886359894	0.5528	0.5042	0.9444055594440556		0.4958504149585041	False	False	False
+negative	other	no	no	anaerobe	psychro	0	0	False	0.020679095747306978	0.0195	0.9808	0.9808019198080192		1.0	False	False	False
+negative	other	no	no	anaerobe	meso	7	8	False	4.623590180439161	4.6298	0.0004	0.9562043795620438	1.0	0.12308769123087691	True	False	False
+negative	other	no	no	anaerobe	thermo	1	1	False	1.8633485501015632	1.8696	0.028	0.32356764323567644		0.972002799720028	False	False	False
+negative	other	no	yes	aerobe	psychro	0	0	False	0.0023554449569114216	0.0032	0.9968	0.9968003199680032		1.0	False	False	False
+negative	other	no	yes	aerobe	meso	1	1	False	0.3756234699579769	0.3778	0.6796	0.9484051594840516		0.3204679532046795	False	False	False
+negative	other	no	yes	aerobe	thermo	0	0	False	0.008012406617027186	0.0079	0.9922	0.9922007799220078		1.0	False	False	False
+negative	other	no	yes	facultative	psychro	0	0	False	0.0004782308787740281	0.0002	0.9998	0.9998000199980002		1.0	False	False	False
+negative	other	no	yes	facultative	meso	0	0	False	0.059622812761719705	0.0605	0.9412	0.9412058794120588		1.0	False	False	False
+negative	other	no	yes	facultative	thermo	0	0	False	0.003076244749797466	0.0025	0.9975	0.9975002499750025		1.0	False	False	False
+negative	other	no	yes	anaerobe	psychro	0	0	False	0.003991537805556033	0.0041	0.9959	0.9959004099590041		1.0	False	False	False
+negative	other	no	yes	anaerobe	meso	1	1	False	0.4582861369806716	0.4562	0.6229	0.9297070292970703		0.37716228377162286	False	False	False
+negative	other	no	yes	anaerobe	thermo	0	0	False	0.06984156831718144	0.0721	0.9301	0.9301069893010699		1.0	False	False	False
+negative	other	yes	no	aerobe	psychro	0	0	False	0.44168832719804046	0.4442	0.6392	0.6392360763923608		1.0	False	False	False
+negative	other	yes	no	aerobe	meso	14	14	False	22.217652478121508	22.2632	0.0	0.010698930106989302	0.04738097618809548	0.9962003799620038	True	True	False
+negative	other	yes	no	aerobe	thermo	0	0	False	0.33153149594055764	0.3305	0.7164	0.7164283571642835		1.0	False	False	False
+negative	other	yes	no	facultative	psychro	0	0	False	0.1132813038453807	0.1051	0.9003	0.9003099690030997		1.0	False	False	False
+negative	other	yes	no	facultative	meso	8	8	False	4.5385251621519584	4.4981	0.0056	0.9736026397360263	1.0	0.0663933606639336	True	False	False
+negative	other	yes	no	facultative	thermo	0	0	False	0.21075556305723014	0.2062	0.8064	0.8064193580641936		1.0	False	False	False
+negative	other	yes	no	anaerobe	psychro	0	0	False	0.017706987246783917	0.0166	0.9835	0.9835016498350165		1.0	False	False	False
+negative	other	yes	no	anaerobe	meso	5	6	False	6.32619576657404	6.3434	0.0	0.28477152284771523	0.6539197932058647	0.9347065293470653	True	False	False
+negative	other	yes	no	anaerobe	thermo	0	3	True	0.21698971980583562	0.216	0.7989	0.7989201079892011		1.0	False	False	False
+negative	other	yes	yes	aerobe	psychro	0	0	False	0.004850634396823616	0.0052	0.9948	0.9948005199480052		1.0	False	False	False
+negative	other	yes	yes	aerobe	meso	0	0	False	0.37319060747589683	0.3715	0.6878	0.6878312168783122		1.0	False	False	False
+negative	other	yes	yes	aerobe	thermo	0	0	False	0.009783828085247854	0.0121	0.9879	0.9879012098790121		1.0	False	False	False
+negative	other	yes	yes	facultative	psychro	0	0	False	0.001235616420395836	0.001	0.999	0.999000099990001		1.0	False	False	False
+negative	other	yes	yes	facultative	meso	0	0	False	0.08428022220481274	0.0846	0.9188	0.9188081191880811		1.0	False	False	False
+negative	other	yes	yes	facultative	thermo	0	0	False	0.004239458020161633	0.004	0.996	0.996000399960004		1.0	False	False	False
+negative	other	yes	yes	anaerobe	psychro	0	0	False	0.00352241742501443	0.0024	0.9976	0.9976002399760024		1.0	False	False	False
+negative	other	yes	yes	anaerobe	meso	3	3	False	0.38170447049027173	0.3857	0.6742	0.9999000099990001		0.0057994200579942	False	False	False
+negative	other	yes	yes	anaerobe	thermo	0	0	False	0.06002864509299375	0.0622	0.9388	0.9388061193880612		1.0	False	False	False
+positive	rod	no	no	aerobe	psychro	0	0	False	0.026108568278055362	0.0273	0.9729	0.9729027097290271		1.0	False	False	False
+positive	rod	no	no	aerobe	meso	179	182	False	230.1858856281388	230.1052	0.0	9.999000099990002e-05	0.0008856257231419716	1.0	True	True	False
+positive	rod	no	no	aerobe	thermo	1	2	False	5.537463935530316	5.5258	0.002	0.016198380161983803	0.06695330466953305	0.998000199980002	True	False	False
+positive	rod	no	no	facultative	psychro	0	0	False	0.0038873407422488357	0.0046	0.9954	0.9954004599540046		1.0	False	False	False
+positive	rod	no	no	facultative	meso	95	95	False	42.2539231674727	42.2632	0.0	1.0	1.0	9.999000099990002e-05	True	False	False
+positive	rod	no	no	facultative	thermo	0	0	False	2.024354553641488	2.0423	0.1192	0.1192880711928807		1.0	False	False	False
+positive	rod	no	no	anaerobe	psychro	0	0	False	0.14147834204372878	0.1373	0.8635	0.8635136486351365		1.0	False	False	False
+positive	rod	no	no	anaerobe	meso	53	53	False	40.327415700659756	40.3425	0.0	0.9998000199980002	1.0	0.0007999200079992001	True	False	False
+positive	rod	no	no	anaerobe	thermo	4	5	False	3.510195712150241	3.5118	0.0196	0.7375262473752625	1.0	0.4781521847815218	True	False	False
+positive	rod	no	yes	aerobe	psychro	0	0	False	0.002061307728561535	0.0019	0.9981	0.9981001899810019		1.0	False	False	False
+positive	rod	no	yes	aerobe	meso	138	139	False	140.04239334260657	140.0849	0.0	0.41605839416058393	0.85985401459854	0.6344365563443656	True	False	False
+positive	rod	no	yes	aerobe	thermo	10	10	False	6.587519534640406	6.5678	0.0008	0.948905109489051	1.0	0.1075892410758924	True	False	False
+positive	rod	no	yes	facultative	psychro	0	0	False	0.0019253809676437316	0.0018	0.9982	0.9982001799820018		1.0	False	False	False
+positive	rod	no	yes	facultative	meso	15	15	False	52.73966745064278	52.8061	0.0	9.999000099990002e-05	0.0008856257231419716	1.0	True	True	False
+positive	rod	no	yes	facultative	thermo	1	1	False	3.8526217295402967	3.8173	0.0174	0.0953904609539046	0.2957104289571043	0.9826017398260174	True	False	False
+positive	rod	no	yes	anaerobe	psychro	1	1	False	0.21691902439451002	0.2158	0.7842	1.0		0.21587841215878412	False	False	False
+positive	rod	no	yes	anaerobe	meso	22	22	False	28.702989704459274	28.7093	0.0	0.051794820517948204	0.18889875718310523	0.9719028097190281	True	False	False
+positive	rod	no	yes	anaerobe	thermo	4	4	False	6.01630098875873	6.0418	0.0004	0.22717728227177283	0.5417304423403814	0.9016098390160984	True	False	False
+positive	rod	yes	no	aerobe	psychro	0	0	False	0.022857964671723213	0.0253	0.9748	0.9748025197480252		1.0	False	False	False
+positive	rod	yes	no	aerobe	meso	31	33	False	67.2416204808957	67.2915	0.0	9.999000099990002e-05	0.0008856257231419716	1.0	True	True	False
+positive	rod	yes	no	aerobe	thermo	1	1	False	4.069920510781486	4.0768	0.0133	0.07429257074292571	0.24242838874007339	0.9867013298670133	True	False	False
+positive	rod	yes	no	facultative	psychro	0	0	False	0.006179866975294851	0.0052	0.9948	0.9948005199480052		1.0	False	False	False
+positive	rod	yes	no	facultative	meso	11	11	False	34.35674465771942	34.3175	0.0	9.999000099990002e-05	0.0008856257231419716	1.0	True	True	False
+positive	rod	yes	no	facultative	thermo	0	0	False	2.632448759100017	2.6338	0.0632	0.06329367063293671		1.0	False	False	False
+positive	rod	yes	no	anaerobe	psychro	0	0	False	0.12113484023414765	0.1215	0.8787	0.8787121287871212		1.0	False	False	False
+positive	rod	yes	no	anaerobe	meso	5	5	False	16.149127488376244	16.1482	0.0	0.00029997000299970003	0.0018598140185981404	1.0	True	True	False
+positive	rod	yes	no	anaerobe	thermo	4	4	False	4.264843284953246	4.2523	0.005	0.5795420457954205	1.0	0.6558344165583442	True	False	False
+positive	rod	yes	yes	aerobe	psychro	0	0	False	0.0018641221421623843	0.002	0.998	0.998000199980002		1.0	False	False	False
+positive	rod	yes	yes	aerobe	meso	200	200	False	105.95632369649313	105.9769	0.0	1.0	1.0	9.999000099990002e-05	True	False	False
+positive	rod	yes	yes	aerobe	thermo	23	23	False	8.043369286199802	8.0439	0.0001	1.0	1.0	9.999000099990002e-05	True	False	False
+positive	rod	yes	yes	facultative	psychro	0	0	False	0.0017101652867447853	0.001	0.999	0.999000099990001		1.0	False	False	False
+positive	rod	yes	yes	facultative	meso	61	61	False	66.96781843189748	66.9425	0.0	0.1780821917808219	0.44164383561643833	0.8629137086291371	True	False	False
+positive	rod	yes	yes	facultative	thermo	4	4	False	5.3529390067727975	5.3567	0.004	0.36096390360963904	0.7992772151356293	0.8032196780321967	True	False	False
+positive	rod	yes	yes	anaerobe	psychro	0	0	False	0.1889209869938668	0.1873	0.8127	0.8127187281271873		1.0	False	False	False
+positive	rod	yes	yes	anaerobe	meso	29	29	False	26.01757676682383	25.9527	0.0	0.8404159584041596	1.0	0.23477652234776522	True	False	False
+positive	rod	yes	yes	anaerobe	thermo	15	17	False	9.589621763697949	9.5878	0.0	0.9964003599640036	1.0	0.012198780121987801	True	False	False
+positive	coccus	no	no	aerobe	psychro	0	0	False	0.0004432416606897255	0.0005	0.9995	0.9995000499950005		1.0	False	False	False
+positive	coccus	no	no	aerobe	meso	82	82	False	51.683230656790116	51.6851	0.0	1.0	1.0	9.999000099990002e-05	True	False	False
+positive	coccus	no	no	aerobe	thermo	1	2	False	1.779004616363785	1.7689	0.1414	0.4497550244975502		0.8586141385861414	False	False	False
+positive	coccus	no	no	facultative	psychro	0	0	False	0.00015905868511311794	0.0001	0.9999	0.9999000099990001		1.0	False	False	False
+positive	coccus	no	no	facultative	meso	53	53	False	8.273340285197202	8.3057	0.0	1.0	1.0	9.999000099990002e-05	True	False	False
+positive	coccus	no	no	facultative	thermo	0	0	False	0.3764991155358736	0.3777	0.6832	0.6832316768323168		1.0	False	False	False
+positive	coccus	no	no	anaerobe	psychro	0	0	False	0.010817701223205122	0.01	0.99	0.99000099990001		1.0	False	False	False
+positive	coccus	no	no	anaerobe	meso	12	13	False	6.117827301335869	6.1254	0.0	0.9995000499950005	1.0	0.0036996300369963003	True	False	False
+positive	coccus	no	no	anaerobe	thermo	0	0	False	0.2219146825066597	0.2299	0.7924	0.7924207579242076		1.0	False	False	False
+positive	coccus	no	yes	aerobe	psychro	0	0	False	0.00015210528489377522	0.0003	0.9997	0.9997000299970003		1.0	False	False	False
+positive	coccus	no	yes	aerobe	meso	2	2	False	27.152865864626012	27.1197	0.0	9.999000099990002e-05	0.0008856257231419716	1.0	True	True	False
+positive	coccus	no	yes	aerobe	thermo	0	0	False	1.0293438078812787	1.0339	0.3438	0.3438656134386561		1.0	False	False	False
+positive	coccus	no	yes	facultative	psychro	0	0	False	0.00014986395138730392	0.0003	0.9997	0.9997000299970003		1.0	False	False	False
+positive	coccus	no	yes	facultative	meso	0	0	False	8.993541100784393	8.9694	0.0001	0.00019998000199980003	0.0015498450154984502	1.0	True	True	True
+positive	coccus	no	yes	facultative	thermo	0	0	False	0.6078407021010592	0.6183	0.5377	0.5377462253774623		1.0	False	False	False
+positive	coccus	no	yes	anaerobe	psychro	0	0	False	0.017011805351639972	0.0188	0.9812	0.9812018798120188		1.0	False	False	False
+positive	coccus	no	yes	anaerobe	meso	1	1	False	2.985885317077901	2.9869	0.0398	0.17428257174282571		0.9602039796020398	False	False	False
+positive	coccus	no	yes	anaerobe	thermo	0	0	False	0.3367342613201733	0.3482	0.6977	0.6977302269773022		1.0	False	False	False
+positive	coccus	yes	no	aerobe	psychro	0	0	False	0.0007103083781315532	0.0005	0.9995	0.9995000499950005		1.0	False	False	False
+positive	coccus	yes	no	aerobe	meso	15	15	False	11.934507097110655	11.9204	0.0	0.8720127987201279	1.0	0.20267973202679732	True	False	False
+positive	coccus	yes	no	aerobe	thermo	0	0	False	0.6686213482229026	0.6718	0.5061	0.5061493850614939		1.0	False	False	False
+positive	coccus	yes	no	facultative	psychro	0	0	False	0.0002507466394843738	0.0001	0.9999	0.9999000099990001		1.0	False	False	False
+positive	coccus	yes	no	facultative	meso	2	2	False	5.667917461393886	5.654	0.0026	0.06779322067793221	0.2335099823350998	0.9809019098090191	True	False	False
+positive	coccus	yes	no	facultative	thermo	0	0	False	0.4269938484870258	0.4354	0.6419	0.6419358064193581		1.0	False	False	False
+positive	coccus	yes	no	anaerobe	psychro	0	0	False	0.009415494097415622	0.0094	0.9906	0.9906009399060094		1.0	False	False	False
+positive	coccus	yes	no	anaerobe	meso	0	0	False	1.556058782837771	1.5527	0.1982	0.1982801719828017		1.0	False	False	False
+positive	coccus	yes	no	anaerobe	thermo	0	0	False	0.19024301237250157	0.2005	0.8168	0.8168183181681832		1.0	False	False	False
+positive	coccus	yes	yes	aerobe	psychro	0	0	False	0.00013643593902265365	0.0002	0.9998	0.9998000199980002		1.0	False	False	False
+positive	coccus	yes	yes	aerobe	meso	1	1	False	17.633701580752	17.6275	0.0	9.999000099990002e-05	0.0008856257231419716	1.0	True	True	False
+positive	coccus	yes	yes	aerobe	thermo	0	0	False	1.3084845021479565	1.3165	0.262	0.26207379262073793		1.0	False	False	False
+positive	coccus	yes	yes	facultative	psychro	0	0	False	0.00013174335419607438	0.0003	0.9997	0.9997000299970003		1.0	False	False	False
+positive	coccus	yes	yes	facultative	meso	0	0	False	10.911996442291018	10.9234	0.0	9.999000099990002e-05	0.0008856257231419716	1.0	True	True	True
+positive	coccus	yes	yes	facultative	thermo	0	0	False	0.867867833465158	0.8637	0.4132	0.41325867413258677		1.0	False	False	False
+positive	coccus	yes	yes	anaerobe	psychro	0	0	False	0.014816771591727725	0.0166	0.9834	0.9834016598340166		1.0	False	False	False
+positive	coccus	yes	yes	anaerobe	meso	0	0	False	2.2632573763993977	2.2815	0.0841	0.0841915808419158		1.0	False	False	False
+positive	coccus	yes	yes	anaerobe	thermo	0	0	False	0.31150749695316493	0.3079	0.7317	0.7317268273172682		1.0	False	False	False
+positive	other	no	no	aerobe	psychro	0	0	False	0.0006959052896076347	0.0006	0.9994	0.9994000599940006		1.0	False	False	False
+positive	other	no	no	aerobe	meso	15	16	False	26.670928070117906	26.7014	0.0	0.00029997000299970003	0.0018598140185981404	0.9999000099990001	True	True	False
+positive	other	no	no	aerobe	thermo	0	0	False	0.372095068187503	0.365	0.6878	0.6878312168783122		1.0	False	False	False
+positive	other	no	no	facultative	psychro	0	0	False	0.000168544472196675	0.0	1.0	1.0		1.0	False	False	False
+positive	other	no	no	facultative	meso	9	9	False	2.9237167299493647	2.9295	0.0452	0.9996000399960004		0.0011998800119988001	False	False	False
+positive	other	no	no	facultative	thermo	0	0	False	0.05206911355448044	0.0499	0.9508	0.9508049195080492		1.0	False	False	False
+positive	other	no	no	anaerobe	psychro	0	0	False	0.008164113008503332	0.0085	0.9915	0.9915008499150085		1.0	False	False	False
+positive	other	no	no	anaerobe	meso	4	4	False	3.9833203900342755	3.9735	0.0	0.6772322767723228	1.0	0.5998400159984002	True	False	False
+positive	other	no	no	anaerobe	thermo	0	0	False	0.15062982089728819	0.1522	0.857	0.857014298570143		1.0	False	False	False
+positive	other	no	yes	aerobe	psychro	0	0	False	0.00011664261179357156	0.0	1.0	1.0		1.0	False	False	False
+positive	other	no	yes	aerobe	meso	22	22	False	12.04574152251967	12.0614	0.0001	0.9998000199980002	1.0	0.0006999300069993001	True	False	False
+positive	other	no	yes	aerobe	thermo	2	2	False	2.0777589847264757	2.0707	0.0	0.7517248275172482		0.7901209879012099	False	False	False
+positive	other	no	yes	facultative	psychro	0	0	False	0.0001128506809875233	0.0002	0.9998	0.9998000199980002		1.0	False	False	False
+positive	other	no	yes	facultative	meso	0	0	False	1.8993559417089196	1.8867	0.1326	0.1326867313268673		1.0	False	False	False
+positive	other	no	yes	facultative	thermo	2	2	False	0.536249071997002	0.5446	0.4854	0.9991000899910009		0.029197080291970802	False	False	False
+positive	other	no	yes	anaerobe	psychro	0	0	False	0.012759132764316722	0.012	0.988	0.988001199880012		1.0	False	False	False
+positive	other	no	yes	anaerobe	meso	2	2	False	1.7906554015998217	1.8053	0.1414	0.7361263873612639		0.5636436356364364	False	False	False
+positive	other	no	yes	anaerobe	thermo	0	0	False	0.2244467686012194	0.2237	0.795	0.795020497950205		1.0	False	False	False
+positive	other	yes	no	aerobe	psychro	0	0	False	0.0009721421914201352	0.0012	0.9988	0.9988001199880012		1.0	False	False	False
+positive	other	yes	no	aerobe	meso	2	2	False	3.131960817538298	3.1383	0.0343	0.37546245375462456	0.8027128321650594	0.8418158184181582	True	False	False
+positive	other	yes	no	aerobe	thermo	0	0	False	0.07209023920225557	0.0703	0.9314	0.9314068593140686		1.0	False	False	False
+positive	other	yes	no	facultative	psychro	0	0	False	0.0002991775344169408	0.0004	0.9996	0.9996000399960004		1.0	False	False	False
+positive	other	yes	no	facultative	meso	0	0	False	0.6688313468928709	0.6592	0.5117	0.5117488251174882		1.0	False	False	False
+positive	other	yes	no	facultative	thermo	0	0	False	0.03584510226479593	0.037	0.9639	0.9639036096390361		1.0	False	False	False
+positive	other	yes	no	anaerobe	psychro	0	0	False	0.0070840016991762355	0.0075	0.9925	0.9925007499250075		1.0	False	False	False
+positive	other	yes	no	anaerobe	meso	2	2	False	0.9885985856525971	0.9785	0.3508	0.9373062693730627		0.25577442255774424	False	False	False
+positive	other	yes	no	anaerobe	thermo	0	0	False	0.12308117691762296	0.1147	0.8897	0.8897110288971103		1.0	False	False	False
+positive	other	yes	yes	aerobe	psychro	0	0	False	0.00010668785204899149	0.0	1.0	1.0		1.0	False	False	False
+positive	other	yes	yes	aerobe	meso	2	2	False	2.200648942482571	2.1881	0.0976	0.6251374862513749		0.663033696630337	False	False	False
+positive	other	yes	yes	aerobe	thermo	0	0	False	0.1095526807627839	0.1084	0.8966	0.8966103389661034		1.0	False	False	False
+positive	other	yes	yes	facultative	psychro	0	0	False	9.99688483276535e-05	0.0001	0.9999	0.9999000099990001		1.0	False	False	False
+positive	other	yes	yes	facultative	meso	0	0	False	0.9326199728259288	0.9267	0.3683	0.36836316368363164		1.0	False	False	False
+positive	other	yes	yes	facultative	thermo	0	0	False	0.06899753449887593	0.0669	0.9347	0.9347065293470653		1.0	False	False	False
+positive	other	yes	yes	anaerobe	psychro	0	0	False	0.011112756450001936	0.0114	0.9886	0.9886011398860114		1.0	False	False	False
+positive	other	yes	yes	anaerobe	meso	1	1	False	1.1937286443778286	1.2052	0.2649	0.6553344665533447		0.7351264873512648	False	False	False
+positive	other	yes	yes	anaerobe	thermo	0	0	False	0.19387288676496509	0.1898	0.825	0.825017498250175		1.0	False	False	False
