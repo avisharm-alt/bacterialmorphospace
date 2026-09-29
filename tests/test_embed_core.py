@@ -1,0 +1,214 @@
+"""Unit tests for src/embed_core.py: no network, no GPU, no Modal."""
+
+import gzip
+import math
+import os
+
+import pytest
+
+from src import embed_core as core
+
+
+# --- NCBI paths ---------------------------------------------------------------------------
+def test_ncbi_parent_url_refseq_and_genbank():
+    assert core.ncbi_parent_url("GCF_000005845.2").endswith("/genomes/all/GCF/000/005/845/")
+    assert core.ncbi_parent_url("GCA_001580535.1").endswith("/genomes/all/GCA/001/580/535/")
+
+
+@pytest.mark.parametrize("bad", ["GCF_000005845", "GCX_000005845.2", "", "GCF_5845.2"])
+def test_ncbi_parent_url_rejects_unversioned_or_malformed(bad):
+    with pytest.raises(ValueError):
+        core.ncbi_parent_url(bad)
+
+
+def test_find_assembly_dir_picks_exact_accession_not_prefix_neighbour():
+    html = ('<a href="GCF_000005845.2_ASM584v2/">x</a> <a href="GCF_000005845.20_Other/">y</a> '
+            '<a href="GCF_000005846.1_Z/">z</a>')
+    assert core.find_assembly_dir(html, "GCF_000005845.2") == "GCF_000005845.2_ASM584v2"
+    assert core.find_assembly_dir(html, "GCF_000005847.1") is None
+
+
+def test_parse_md5_file():
+    txt = "AbC123  ./GCF_1_x_genomic.fna.gz\ndef456  ./README.txt\n"
+    assert core.parse_md5_file(txt) == {"GCF_1_x_genomic.fna.gz": "abc123", "README.txt": "def456"}
+
+
+# --- download verification: the silent zero-byte failure --------------------------------------
+def _fasta_gz(path, seq_len=150_000):  # random DNA gzips to ~2 bits/base; must clear the 20 kB floor
+    import random
+
+    rng = random.Random(0)
+    seq = "".join(rng.choice("ACGT") for _ in range(seq_len))  # random so gzip cannot shrink it below the floor
+    with gzip.open(path, "wt") as f:
+        f.write(">c1 test\n" + "\n".join(seq[i:i + 80] for i in range(0, len(seq), 80)) + "\n")
+    return path
+
+
+def test_verify_accepts_good_file(tmp_path):
+    p = _fasta_gz(tmp_path / "g.fna.gz")
+    core.verify_download(p, expected_bytes=p.stat().st_size, expected_md5=core.md5_of(p))
+
+
+def test_verify_rejects_zero_byte_file(tmp_path):
+    p = tmp_path / "empty.fna.gz"
+    p.write_bytes(b"")
+    with pytest.raises(IOError, match="floor"):
+        core.verify_download(p)
+
+
+def test_verify_rejects_truncated_file(tmp_path):
+    p = _fasta_gz(tmp_path / "g.fna.gz")
+    full = p.stat().st_size
+    p.write_bytes(p.read_bytes()[: full // 2])
+    with pytest.raises(IOError):
+        core.verify_download(p, expected_bytes=full)
+
+
+def test_verify_rejects_truncated_gzip_even_without_announced_length(tmp_path):
+    p = _fasta_gz(tmp_path / "g.fna.gz", seq_len=200_000)
+    p.write_bytes(p.read_bytes()[:-500])
+    # header may still decode; the point is that some check rejects it or the read raises
+    with pytest.raises((IOError, EOFError)):
+        core.verify_download(p)
+        core.longest_contig(p)
+
+
+def test_verify_rejects_md5_mismatch_and_non_fasta(tmp_path):
+    p = _fasta_gz(tmp_path / "g.fna.gz")
+    with pytest.raises(IOError, match="md5"):
+        core.verify_download(p, expected_md5="0" * 32)
+    q = tmp_path / "junk.gz"
+    with gzip.open(q, "wb") as f:
+        f.write(b"<html>" + bytes(range(256)) * 200 + os.urandom(30_000))  # an HTML error page, not FASTA
+    with pytest.raises(IOError, match="FASTA"):
+        core.verify_download(q)
+
+
+def test_longest_contig(tmp_path):
+    p = tmp_path / "m.fna.gz"
+    with gzip.open(p, "wt") as f:
+        f.write(">short desc\nACGT\n>long other\nacgtacgt\nAC\n>mid\nAAAAAA\n")
+    cid, seq = core.longest_contig(p)
+    assert (cid, seq) == ("long", "ACGTACGTAC")
+
+
+# --- windows -------------------------------------------------------------------------------
+def test_window_starts_even_and_in_bounds():
+    s = core.window_starts(100_000, 10)
+    assert s[0] == 0 and s[-1] == 100_000 - core.WINDOW and len(set(s)) == 10
+    gaps = [b - a for a, b in zip(s, s[1:])]
+    assert max(gaps) - min(gaps) <= 1
+    assert core.window_starts(100_000, 1) == [(100_000 - core.WINDOW) // 2]
+
+
+def test_window_starts_rejects_short_contig():
+    with pytest.raises(ValueError, match="shorter"):
+        core.window_starts(core.WINDOW - 1, 5)
+
+
+@pytest.mark.parametrize("n", [10, 25, 50, 100])
+def test_subset_indices_distinct_span_and_evenly_spaced(n):
+    idx = core.subset_indices(100, n)
+    assert len(idx) == len(set(idx)) == n and idx[0] == 0 and idx[-1] == 99
+    gaps = [b - a for a, b in zip(idx, idx[1:])]
+    assert max(gaps) - min(gaps) <= 1  # within one pool step of perfectly even
+
+
+def test_subset_windows_stay_within_half_a_pool_step_of_independent_linspace():
+    contig, n, pool = 3_000_000, 25, 100
+    pool_starts = core.window_starts(contig, pool)
+    sub = [pool_starts[i] for i in core.subset_indices(pool, n)]
+    ideal = core.window_starts(contig, n)
+    step = (contig - core.WINDOW) / (pool - 1)
+    assert max(abs(a - b) for a, b in zip(sub, ideal)) <= step / 2 + 1
+
+
+def test_subset_indices_bounds():
+    with pytest.raises(ValueError):
+        core.subset_indices(10, 11)
+    assert core.subset_indices(10, 10) == list(range(10))
+
+
+def test_depth_seconds_uses_only_that_depths_windows():
+    times = [float(i) for i in range(100)]
+    assert core.depth_seconds(times, 100, 100) == sum(times)
+    assert core.depth_seconds(times, 100, 10) == sum(times[i] for i in core.subset_indices(100, 10))
+
+
+# --- sampling --------------------------------------------------------------------------------
+def test_pool_groups_pools_small_phyla():
+    ph = ["A"] * 10 + ["B"] * 9 + ["C"]
+    assert core.pool_groups(ph) == ["A"] * 10 + ["other"] * 10
+
+
+def test_allocate_caps_big_groups_and_fills_exactly():
+    sizes = {"big1": 813, "big2": 733, "small": 12, "tiny": 3}
+    a = core.allocate(sizes, 100)
+    assert sum(a.values()) == 100
+    assert a["tiny"] == 3 and a["small"] == 12  # small groups fully represented
+    assert abs(a["big1"] - a["big2"]) <= 1  # remainder split, not proportional
+
+
+def test_allocate_total_larger_than_population():
+    assert core.allocate({"a": 3, "b": 2}, 50) == {"a": 3, "b": 2}
+
+
+def test_panel_allocation_matches_expected_shape():
+    sizes = {"Pseudomonadota": 813, "Bacillota": 733, "Actinomycetota": 481, "Bacteroidota": 409,
+             "Desulfobacterota": 25, "Deinococcota": 21, "Acidobacteriota": 16, "Chloroflexota": 16,
+             "Campylobacterota": 13, "Verrucomicrobiota": 12, "other": 41}
+    a = core.allocate(sizes, 200)
+    assert sum(a.values()) == 200 and max(a.values()) <= 22
+    assert a["Verrucomicrobiota"] == 12 and a["Campylobacterota"] == 13
+
+
+def test_stratified_sample_is_deterministic_and_unique():
+    rows = [{"ncbi_assembly_accession": f"GCF_{i:09d}.1", "group": "g%d" % (i % 4)} for i in range(400)]
+    a = core.stratified_sample(rows, 40, seed=1)
+    b = core.stratified_sample(rows, 40, seed=1)
+    c = core.stratified_sample(rows, 40, seed=2)
+    assert a == b and a != c and len(a) == 40
+    assert len({r["ncbi_assembly_accession"] for r in a}) == 40
+
+
+# --- cost ------------------------------------------------------------------------------------
+def test_estimate_reflects_the_recipe_numbers():
+    e = core.estimate_gpu(200, 100, n_containers=1)
+    assert 4.0 < e["gpu_hours"] < 4.6 and 8.5 < e["usd"] < 10  # the sweep is NOT a "couple of dollars"
+    assert core.estimate_gpu(2580, 25)["usd"] > 29  # 25 windows across the panel already eats a $30 credit
+
+
+# --- evaluation ------------------------------------------------------------------------------
+def test_evaluate_depth_learns_signal_and_scaling_matters():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("sklearn")
+    rng = np.random.default_rng(0)
+    n = 300
+    groups = np.array([f"g{i % 6}" for i in range(n)])
+    y = rng.integers(0, 2, n)
+    X = rng.normal(size=(n, 40)) * rng.uniform(0.01, 1000, 40)  # wildly different feature scales
+    X[:, 0] += y * 3 * (np.std(X[:, 0]))  # informative feature
+    res = core.evaluate_depth(X, y, groups, n_splits=3)
+    assert res["folds_scored"] == 3 and res["auc_mean"] > 0.8
+
+
+def test_evaluate_depth_skips_single_class_folds_and_counts_them():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("sklearn")
+    rng = np.random.default_rng(1)
+    groups = np.array(["a"] * 30 + ["b"] * 30 + ["c"] * 30)
+    y = np.array([0] * 30 + [0, 1] * 15 + [0, 1] * 15)  # group a is uniformly negative
+    X = rng.normal(size=(90, 5))
+    res = core.evaluate_depth(X, y, groups, n_splits=3)
+    assert res["folds_total"] == 3 and res["folds_scored"] == 2
+
+
+def test_select_depth_one_se_rule():
+    res = [
+        {"depth": 10, "auc_mean": 0.80, "auc_std": 0.06, "folds_scored": 4},
+        {"depth": 25, "auc_mean": 0.84, "auc_std": 0.05, "folds_scored": 4},
+        {"depth": 50, "auc_mean": 0.86, "auc_std": 0.05, "folds_scored": 4},
+        {"depth": 100, "auc_mean": 0.87, "auc_std": 0.05, "folds_scored": 4},
+    ]
+    sel = core.select_depth(res)  # SE = 0.025; threshold 0.845 -> 50 is the smallest that qualifies
+    assert sel["best_depth"] == 100 and sel["selected_depth"] == 50 and math.isclose(sel["one_se"], 0.025)

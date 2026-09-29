@@ -204,6 +204,53 @@ datasets download genome accession --inputfile data/final/assembly_accessions_no
 - **Also reported:** occupied vs expected cells under every null, per-phylum occupancy, and the expected species per cell
   for every map size.
 
+## Evo 2 genome embeddings on Modal
+
+`src/evo2_modal.py` embeds the core-panel genomes with Evo 2 7B (layer `blocks.28.mlp.l3`, 4096-dim). It lives
+beside the pipeline and reads `data/final/core_panel_species.tsv`. Pure logic (window placement, sampling, download
+checks, the classifier) is in `src/embed_core.py` and is unit-tested without a GPU (`tests/test_embed_core.py`).
+`config.toml` is deliberately untouched, because the run manifest hashes it.
+
+```bash
+source ~/venvs/modal/bin/activate
+modal run -m src.evo2_modal::sweep --dry-run              # sample + cost estimate, spends nothing
+modal run -m src.evo2_modal::sweep                        # sampling-depth experiment
+modal run -m src.evo2_modal::embed_all --n-windows 25     # production run; resumable
+```
+
+**Recipe.** Evo 2 7B does not need transformer-engine (TE), but a *partially* installed TE raises a `RuntimeError` that
+evo2's `except ImportError` misses (evo2 issue #201); a fully *absent* TE gives `HAS_TE = False`. So the image is a plain
+`nvidia/cuda:12.8.1-devel` + Python 3.11 base (not NGC, which ships TE), `evo2==0.3.0` and `vtx==1.1.0` go in with
+`--no-deps`, torch is 2.8.0 (cu128), and flash-attn is the prebuilt `v2.8.3` wheel for `cu12torch2.8cxx11abiTRUE-cp311`.
+The image build fails if any transformer-engine distribution is present, and `verify_env` asserts `HAS_TE is False` on a GPU.
+The model must be `evo2_7b_base` (8k context), the only config without FP8 input projections.
+
+**Storage.** Volume `evo2-hf-cache` holds the ~14 GB weights (`HF_HOME`). Volume `evo2-embeddings` holds
+`genomes/<acc>.fna.gz` and `embeddings/<acc>__n<N>.npy` (4096 float32), plus `__windows.npy` and `__meta.json`
+(per-window vectors and GPU timings) for sweep genomes. A genome is skipped when its `.npy` exists, and each file is
+written atomically, so an interrupted run resumes where it stopped. Fetch results with
+`modal volume get evo2-embeddings embeddings ./evo2_embeddings`.
+
+**Downloads** run on CPU containers, not the GPU. Every file must exceed 20 kB, match `Content-Length`, match NCBI's
+`md5checksums.txt` and decompress to FASTA. Nothing is inferred from an exit status. If the RefSeq accession is gone, the
+GenBank accession is tried.
+
+**Windows.** `n` windows of 8,192 bp, evenly spaced over the longest contig, mean-pooled within a window and then across
+windows. The sweep embeds one pool of `max(depths)` windows per genome and takes each smaller depth as an evenly
+spaced subset of it. That is 100 forward passes per genome instead of 185, and it makes the depths a paired
+comparison. A subset window sits within 0.5% of the contig length of where an independent `linspace(n)` would put it.
+
+**Sweep.** About 200 genomes, stratified across GTDB phyla by cap-and-fill (phyla with <10 species in the panel are pooled
+into `other`). It reports `roc_auc` for `motility`
+with `make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000))` under `GroupKFold` grouped by pooled phylum,
+alongside s/genome and the projected hours and dollars for 2,580. Outputs: `reports/tables/evo2_sampling_depth_sweep.tsv`,
+`evo2_sweep_genomes.tsv` and `evo2_sweep_selected_depth.json` (smallest depth within one SE of the best mean AUC;
+`embed_all` reads it when `--n-windows` is omitted). Both entry points take `--max-usd` and stop cleanly, with checkpoints
+kept, when the running estimate exceeds it. Caveats to read the result with:
+- Many panel genomes are drafts. In a 40-genome check the median longest contig was 782 kb, so at depth 100 about half of
+  the genomes must overlap their windows (`frac_overlapping` reports this), and depth gains partly saturate.
+- Some folds can be single-class; those are skipped and counted in `folds_scored`.
+
 ## Layout
 
 ```
