@@ -1,0 +1,25 @@
+panel	view	null	N used	occupied	expected occupied	testable cells	empty✗	emptied by exclusion
+core panel (6 traits)	primary	global	2580	90	117.3	69	4	0
+core panel (6 traits)	primary	phylum	2563	90	109.3	67	4	0
+core panel (6 traits)	primary	class	2522	89	102.6	62	2	1
+core panel (6 traits)	primary	order	2423	83	87.9	52	0	7
+core panel (6 traits)	strain-level	global	2630	90	118.1	71	4	0
+core panel (6 traits)	strain-level	order	2477	84	88.4	55	0	6
+core panel (6 traits)	optimum-only	global	2168	87	109.0	60	3	0
+core panel (6 traits)	optimum-only	order	2006	80	82.9	47	0	7
+core panel (6 traits)	fine bins	global	2512	112	145.4	66	3	0
+core panel (6 traits)	fine bins	order	2354	99	103.7	52	0	13
+core panel (6 traits)	genus-level	global	1235	86	104.2	59	3	0
+core panel (6 traits)	genus-level	order	1067	77	77.9	40	0	9
+no-spore panel (5 traits)	primary	global	5634	69	78.3	54	1	0
+no-spore panel (5 traits)	primary	phylum	5617	69	78.3	59	1	0
+no-spore panel (5 traits)	primary	class	5568	69	75.8	53	1	0
+no-spore panel (5 traits)	primary	order	5416	66	69.4	49	1	3
+no-spore panel (5 traits)	strain-level	global	6184	70	79.4	55	1	0
+no-spore panel (5 traits)	strain-level	order	5968	68	69.6	50	1	2
+no-spore panel (5 traits)	optimum-only	global	3786	65	72.2	51	1	0
+no-spore panel (5 traits)	optimum-only	order	3590	63	65.9	44	0	2
+no-spore panel (5 traits)	fine bins	global	5460	95	115.7	66	4	0
+no-spore panel (5 traits)	fine bins	order	5240	88	94.7	57	1	7
+no-spore panel (5 traits)	genus-level	global	1927	61	69.4	48	1	0
+no-spore panel (5 traits)	genus-level	order	1703	55	60.1	42	0	6

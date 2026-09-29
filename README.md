@@ -68,6 +68,29 @@ re-run `all`. Versions are recorded in `reports/run_manifest.json` and at the to
 - the GTDB release from `VERSION.txt`, plus the metadata file's sha256
 - the git commit and the config sha256
 
+### Gitignored outputs: regeneration and checksums
+
+`data/final/strains.parquet` (the joined table, about 11 MB) and `data/interim/unmatched_strains.tsv` (the unmatched log,
+about 9.7 MB) are not committed. Regenerate them from the cache with:
+
+```bash
+python -m src.pipeline all      # or, if data/raw is already populated: python -m src.pipeline extract && python -m src.pipeline join
+sha256sum data/final/strains.parquet data/interim/unmatched_strains.tsv
+```
+
+Snapshot: BacDive API v2 (record DOIs stamped `20260601`), GTDB v232,
+code `b44b2fb`.
+
+| file | rows | sha256 (file bytes) | sha256 (row contents) |
+|---|---|---|---|
+| `data/final/strains.parquet` | 102,187 | `25dafa183111b9e6fe1fab8422d537e1183337d400a92a94af7db7dc083c4a7f` | `1a57137ec2a8148e658ce90169132e2d73f1a869cda789ff5b16d1b735dfdd2a` |
+| `data/interim/unmatched_strains.tsv` | 79,352 | `07b30b67a07bdabff132698a4f96630585d4e4957a100debf9c5f612e0b84c7a` | `ba59b3c4f3a72a287f02b9d162b599beff0503397d4eb59d5802dbc4f84b3c17` |
+
+Regenerating twice from the same cache gave byte-identical files. Parquet bytes can still differ across pandas or pyarrow
+versions, so the row-content hash is the version-independent check. It is the sha256 of
+`pandas.util.hash_pandas_object(table.astype(str), index=False)`. Every run writes both hashes to
+`reports/run_manifest.json` → `outputs`, and that file is authoritative for the run that produced it.
+
 ### BacDive crawl notes
 
 - There is no list-all endpoint, so the crawl sweeps the ID space. `/v2/fetch/{id;id;…}` drops non-existent IDs silently.

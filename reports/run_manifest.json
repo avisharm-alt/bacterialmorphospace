@@ -1,7 +1,8 @@
 {
- "generated_at": "2026-09-29T04:48:25+00:00",
- "git_commit": "f4fa8baabee2363dd9b910bb503bc765114109fd",
- "config_sha256": "df8029adf221038947220c66467dec63c859d30f8d82f69ebab0fab298e45f10",
+ "generated_at": "2026-09-29T05:15:44+00:00",
+ "git_commit": "b44b2fbc37b09dea1b4c23a26eff523f7a93db59",
+ "config_sha256": "96c49f9e4f4adf88c7fc3f37555528460db034b3ece56c5af2b8abfceacaa5a1",
+ "regenerate": "python -m src.pipeline all",
  "bacdive": {
   "api": "https://api.bacdive.dsmz.de/v2",
   "api_version": "v2",
@@ -48,20 +49,62 @@
   "n_genomes": 878998,
   "n_genomes_with_strain_ids": 878899,
   "n_designation_keys": 771360,
-  "joined_at": "2026-09-29T04:45:17+00:00"
+  "joined_at": "2026-09-29T05:12:52+00:00"
+ },
+ "outputs": {
+  "data/final/strains.parquet": {
+   "bytes": 11129036,
+   "sha256": "25dafa183111b9e6fe1fab8422d537e1183337d400a92a94af7db7dc083c4a7f",
+   "rows": 102187,
+   "columns": 143,
+   "content_sha256": "1a57137ec2a8148e658ce90169132e2d73f1a869cda789ff5b16d1b735dfdd2a"
+  },
+  "data/interim/unmatched_strains.tsv": {
+   "bytes": 9729776,
+   "sha256": "07b30b67a07bdabff132698a4f96630585d4e4957a100debf9c5f612e0b84c7a",
+   "rows": 79352,
+   "columns": 9,
+   "content_sha256": "ba59b3c4f3a72a287f02b9d162b599beff0503397d4eb59d5802dbc4f84b3c17"
+  }
  },
  "counts": {
   "strains": 102187,
   "matched": 22835,
-  "core6_complete": 3414,
-  "core6_complete_with_genome": 2630,
-  "core6_species": 2580
+  "core_species": 2580,
+  "no_spore_species": 5634,
+  "core_order_level_survivors": 0,
+  "no_spore_order_level_survivors": 1
  },
  "analysis": {
   "seed": 20260929,
   "n_perm_full": 10000,
   "n_perm_subset": 2000,
   "min_expected_for_test": 3.0,
-  "fdr_alpha": 0.05
+  "fdr_alpha": 0.05,
+  "strata_levels": [
+   "phylum",
+   "class",
+   "order"
+  ],
+  "min_stratum_size": 5,
+  "n_perm_phylum_occupancy": 1000,
+  "survivor_diagnostic_levels": [
+   "family"
+  ],
+  "positive_controls": [
+   {
+    "panel": "core",
+    "name": "Gram-negative endospore-forming cocci",
+    "rationale": "Endospore formation is essentially restricted to Bacillota, which are overwhelmingly Gram-positive, and coccoid endospore formers are rare even there (Sporosarcina, itself motile and Gram-positive). The cell stacks three phylogenetic facts; an independence null cannot see any of them.",
+    "cell": {
+     "gram": "negative",
+     "shape": "coccus",
+     "motility": "no",
+     "spore": "yes",
+     "oxygen": "aerobe",
+     "temperature": "meso"
+    }
+   }
+  ]
  }
 }

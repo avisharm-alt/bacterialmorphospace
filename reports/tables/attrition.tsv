@@ -7,10 +7,11 @@ stage	strains	% of BacDive	with GTDB genome	% with genome	GTDB species	note
 3. spore formation — usable value	5424	5.3%	4254	78.4%	4099	
 3. oxygen tolerance — usable value	21855	21.4%	9510	43.5%	8400	
 3. temperature — usable value	50310	49.2%	18117	36.0%	14334	bin from optimum, else growth range, else single growth point
-3. pH — usable value	6740	6.6%	5298	78.6%	5201	outside the core panel
+3. pH — usable value	6740	6.6%	5298	78.6%	5201	outside the analysed panels
 3. halophily (curated level) — usable value	361	0.4%	247	68.4%	245	curated category only; NaCl tests kept as a column
 3. (NaCl growth tests present, raw column only)	9677	9.5%	6947	71.8%	6594	not binned; kept in nacl_tests_raw
 4. morphology panel (4) complete	4047	4.0%	3126	77.2%	3053	gram + shape + motility + spore
 5. core panel (6) complete	3414	3.3%	2630	77.0%	2580	gram + shape + motility + spore + oxygen + temperature
 5a. core panel (6), temperature from optimum only	2680	2.6%	2189	81.7%	2168	
-5b. original 8-trait panel (core + pH + curated halophily)	153	0.1%	115	75.2%	114	for reference; not analysed
+5b. no-spore panel (5) complete	10055	9.8%	6184	61.5%	5634	gram + shape + motility + oxygen + temperature
+5c. original 8-trait panel (core + pH + curated halophily)	153	0.1%	115	75.2%	114	for reference; not analysed
