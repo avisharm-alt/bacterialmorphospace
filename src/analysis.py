@@ -29,6 +29,26 @@ occupied-but-depleted cells are reported separately.
 A cell is testable only if expected >= `min_expected_for_test` (default 3): with expected 0.3 the
 null itself is empty 74% of the time, so an empty cell carries no information. Cells below the
 threshold are counted and reported as untestable, never flagged.
+
+Stratified nulls (phylum / class / order)
+-----------------------------------------
+The global null ignores phylogeny, so it flags combinations that are rare simply because the traits
+are each fixed in different clades (Gram-negative x endospore: endospores are essentially a Bacillota
+trait). The stratified null permutes every trait column only *within* a GTDB taxon, preserving each
+taxon's own marginals; its expectation is
+
+  expected_s = sum over strata  n_s * prod_k p_{s,k}(level)
+
+A cell that is still emptier than chance under the order-level shuffle is not explained by which
+orders carry which traits. Species in strata with fewer than `min_stratum_size` species are removed
+from that null (and counted), never silently kept: a one- or two-species stratum cannot be meaningfully
+shuffled, and would contribute a fixed, untestable block.
+
+Exclusion must not manufacture emptiness: the excluded species are exactly the phylogenetically
+unusual ones (e.g. every Gram-negative non-motile anaerobic thermophilic rod in BacDive sits in an
+order with <5 species). So a cell is "empty beyond chance" under a stratified null only if it is
+empty in the *full* analysed set; cells emptied solely by the exclusion are labelled
+`emptied_by_exclusion` and never flagged as empty.
 """
 from __future__ import annotations
 
@@ -81,6 +101,7 @@ def add_panel_flags(df: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     df["n_core_usable"] = df[[f"{t}_usable" for t in core]].sum(axis=1)
     df["morph4_complete"] = df[[f"{t}_usable" for t in morph]].all(axis=1)
     df["core6_complete"] = df[[f"{t}_usable" for t in core]].all(axis=1)
+    df["nospore5_complete"] = df[[f"{t}_usable" for t in cfg.no_spore]].all(axis=1)
     df["morph4_fine_complete"] = df[[col(t, "fine") for t in morph]].notna().all(axis=1)
     df["core6_fine_complete"] = df[[col(t, "fine") for t in core]].notna().all(axis=1)
     df["core6_complete_optimum_temp"] = df["core6_complete"] & (df["temperature_bin_source"] == "optimum")
@@ -140,21 +161,61 @@ def _codes(sub: pd.DataFrame, traits: list[str], levels: dict[str, list[str]], b
     return np.vstack(out)
 
 
-def expected_counts(codes: np.ndarray, sizes: tuple[int, ...]) -> np.ndarray:
-    """Expected count per cell under independence (flattened C-order), from the marginals."""
-    n = codes.shape[1]
-    margins = [np.bincount(codes[k], minlength=sizes[k]) / n for k in range(len(sizes))]
-    return (n * reduce(np.multiply.outer, margins)).ravel()
+def expected_counts(codes: np.ndarray, sizes: tuple[int, ...], strata: np.ndarray | None = None) -> np.ndarray:
+    """Expected count per cell (flattened C-order) under independence within each stratum.
+
+    With `strata=None` this is the global expectation N * prod_k p_k.
+    """
+    if strata is None:
+        strata = np.zeros(codes.shape[1], dtype=np.int64)
+    out = np.zeros(int(np.prod(sizes)))
+    for s in np.unique(strata):
+        c = codes[:, strata == s]
+        n = c.shape[1]
+        margins = [np.bincount(c[k], minlength=sizes[k]) / n for k in range(len(sizes))]
+        out += (n * reduce(np.multiply.outer, margins)).ravel()
+    return out
 
 
-def permutation_null(codes: np.ndarray, sizes: tuple[int, ...], n_perm: int, rng: np.random.Generator) -> np.ndarray:
-    """(n_perm, n_cells) cell counts with every trait column permuted independently."""
+def permutation_null(codes: np.ndarray, sizes: tuple[int, ...], n_perm: int, rng: np.random.Generator,
+                     strata: np.ndarray | None = None) -> np.ndarray:
+    """(n_perm, n_cells) cell counts with every trait column permuted independently (within strata, if given)."""
     ncell = int(np.prod(sizes))
     out = np.empty((n_perm, ncell), dtype=np.uint32)
+    if strata is None:
+        for i in range(n_perm):
+            perm = rng.permuted(codes, axis=1)
+            out[i] = np.bincount(np.ravel_multi_index(tuple(perm), sizes), minlength=ncell)
+        return out
+    # Sort by stratum; argsort(stratum + U[0,1)) then permutes uniformly *within* each stratum block.
+    order = np.argsort(strata, kind="stable")
+    cs = codes[:, order]
+    key = strata[order].astype(np.float64)[None, :]
+    k, n = cs.shape
     for i in range(n_perm):
-        perm = rng.permuted(codes, axis=1)
+        idx = np.argsort(key + rng.random((k, n)), axis=1)
+        perm = np.take_along_axis(cs, idx, axis=1)
         out[i] = np.bincount(np.ravel_multi_index(tuple(perm), sizes), minlength=ncell)
     return out
+
+
+def assign_strata(sub: pd.DataFrame, level: str | None, min_size: int) -> tuple[np.ndarray, np.ndarray | None, dict]:
+    """(keep mask, stratum ids for kept rows, bookkeeping) for a null at taxonomic `level`.
+
+    `level=None` is the global null: everything kept, one stratum.
+    """
+    n = len(sub)
+    if level is None:
+        return np.ones(n, dtype=bool), None, {"null": "global", "N_input": n, "N_used": n, "strata_used": 1,
+                                              "strata_excluded": 0, "species_excluded": 0}
+    taxa = sub[f"gtdb_{level}"].astype(object).where(sub[f"gtdb_{level}"].notna(), "__unassigned__").to_numpy()
+    labels, inv, counts = np.unique(taxa, return_inverse=True, return_counts=True)
+    big = counts >= min_size
+    keep = big[inv]
+    _, ids = np.unique(inv[keep], return_inverse=True)
+    info = {"null": level, "N_input": n, "N_used": int(keep.sum()), "strata_used": int(big.sum()),
+            "strata_excluded": int((~big).sum()), "species_excluded": int((~keep).sum())}
+    return keep, ids.astype(np.int64), info
 
 
 def bh_qvalues(p: np.ndarray) -> np.ndarray:
@@ -183,19 +244,25 @@ class Occupancy:
 
 
 def occupancy(sub: pd.DataFrame, traits: list[str], cfg: Config, binning: str = "coarse", n_perm: int = 2000,
-              rng: np.random.Generator | None = None, keep_cells: bool = False) -> Occupancy:
+              rng: np.random.Generator | None = None, keep_cells: bool = False, stratify: str | None = None) -> Occupancy:
+    """Observed vs null occupancy. `stratify` = None (global null) or a GTDB rank ('phylum', 'class', 'order')."""
     rng = rng or np.random.default_rng(cfg["analysis"]["seed"])
+    a = cfg["analysis"]
     lv = {t: levels_for(cfg, t, binning) for t in traits}
     sizes = tuple(len(lv[t]) for t in traits)
     ncell = int(np.prod(sizes))
+    keep, strata, sinfo = assign_strata(sub, stratify, a["min_stratum_size"])
+    obs_all = (np.bincount(np.ravel_multi_index(tuple(_codes(sub, traits, lv, binning)), sizes), minlength=ncell)
+               if len(sub) else np.zeros(ncell, dtype=np.int64))
+    sub = sub[keep]
     n = len(sub)
-    a = cfg["analysis"]
     if n == 0:
-        return Occupancy(traits, binning, 0, ncell, 0, {"N": 0, "cells": ncell, "occupied": 0, "occupied_frac": 0.0}, None)
+        return Occupancy(traits, binning, 0, ncell, 0, {**sinfo, "N": 0, "cells": ncell, "occupied": 0, "occupied_frac": 0.0,
+                                                        "testable_cells": 0, "empty_beyond_chance_cells": 0}, None)
     codes = _codes(sub, traits, lv, binning)
     obs = np.bincount(np.ravel_multi_index(tuple(codes), sizes), minlength=ncell)
-    exp = expected_counts(codes, sizes)
-    null = permutation_null(codes, sizes, n_perm, rng)
+    exp = expected_counts(codes, sizes, strata)
+    null = permutation_null(codes, sizes, n_perm, rng, strata)
     p_low = (1 + (null <= obs).sum(axis=0)) / (n_perm + 1)
     p_high = (1 + (null >= obs).sum(axis=0)) / (n_perm + 1)
     p_empty = (null == 0).mean(axis=0)
@@ -203,18 +270,20 @@ def occupancy(sub: pd.DataFrame, traits: list[str], cfg: Config, binning: str = 
     q = np.full(ncell, np.nan)
     q[testable] = bh_qvalues(p_low[testable])
     flagged = testable & (q < a["fdr_alpha"]) & (obs < exp)
-    empty_flagged = flagged & (obs == 0)
+    emptied_by_exclusion = (obs == 0) & (obs_all > 0)
+    empty_flagged = flagged & (obs_all == 0)
     occ_null = (null > 0).sum(axis=1)
     occupied = int((obs > 0).sum())
     summary = {
-        "N": n, "cells": ncell, "occupied": occupied, "occupied_frac": occupied / ncell, "mean_per_cell": n / ncell,
+        **sinfo, "N": n, "cells": ncell, "occupied": occupied, "occupied_frac": occupied / ncell, "mean_per_cell": n / ncell,
         "null_occupied_mean": float(occ_null.mean()), "null_occupied_frac": float(occ_null.mean() / ncell),
         "null_occupied_lo": float(np.percentile(occ_null, 2.5)), "null_occupied_hi": float(np.percentile(occ_null, 97.5)),
         "p_fewer_occupied_than_null": float((1 + (occ_null <= occupied).sum()) / (n_perm + 1)),
         "empty_cells": int((obs == 0).sum()), "testable_cells": int(testable.sum()),
         "empty_testable_cells": int(((obs == 0) & testable).sum()),
         "flagged_cells": int(flagged.sum()), "empty_beyond_chance_cells": int(empty_flagged.sum()),
-        "depleted_occupied_cells": int((flagged & (obs > 0)).sum()), "n_perm": n_perm,
+        "depleted_occupied_cells": int((flagged & (obs_all > 0)).sum()),
+        "cells_emptied_by_exclusion": int(emptied_by_exclusion.sum()), "n_perm": n_perm,
         "min_p_possible": 1 / (n_perm + 1),
     }
     table = None
@@ -222,6 +291,8 @@ def occupancy(sub: pd.DataFrame, traits: list[str], cfg: Config, binning: str = 
         grid = np.array(list(itertools.product(*[lv[t] for t in traits])), dtype=object)
         table = pd.DataFrame(grid, columns=traits)
         table["observed"] = obs
+        table["observed_all_species"] = obs_all
+        table["emptied_by_exclusion"] = emptied_by_exclusion
         table["expected"] = exp
         table["null_mean"] = null.mean(axis=0)
         table["p_empty_under_null"] = p_empty
@@ -232,6 +303,54 @@ def occupancy(sub: pd.DataFrame, traits: list[str], cfg: Config, binning: str = 
         table["emptier_than_chance"] = flagged
         table["empty_beyond_chance"] = empty_flagged
     return Occupancy(traits, binning, n, ncell, occupied, summary, table)
+
+
+def cell_expected_by_stratum(sub: pd.DataFrame, traits: list[str], cfg: Config, cell: dict[str, str],
+                             level: str = "order", binning: str = "coarse") -> pd.DataFrame:
+    """Which taxa the stratified null expects to populate `cell`: n_s * prod_k p_{s,k}(cell_k) per stratum."""
+    keep, strata, _ = assign_strata(sub, level, cfg["analysis"]["min_stratum_size"])
+    s = sub[keep]
+    rows = []
+    for taxon, g in s.groupby(f"gtdb_{level}", dropna=False):
+        e = float(len(g) * np.prod([(g[col(t, binning)] == cell[t]).mean() for t in traits]))
+        rows.append({level: taxon, "phylum": g["gtdb_phylum"].iloc[0], "N": len(g), "expected in cell": e,
+                     **{f"share {t}={cell[t]}": float((g[col(t, binning)] == cell[t]).mean()) for t in traits}})
+    out = pd.DataFrame(rows).sort_values("expected in cell", ascending=False)
+    return out[out["expected in cell"] > 0]
+
+
+def phylum_occupancy(sub: pd.DataFrame, traits: list[str], cfg: Config, binning: str = "coarse",
+                     n_perm: int = 1000, seed: int = 0) -> pd.DataFrame:
+    """Cells occupied by each phylum on its own, cells only it occupies, and the cumulative share.
+
+    `null_occupied_mean` permutes traits within the phylum alone (phyla below `min_stratum_size`: NaN).
+    """
+    lv = {t: levels_for(cfg, t, binning) for t in traits}
+    sizes = tuple(len(lv[t]) for t in traits)
+    codes = _codes(sub, traits, lv, binning)
+    cell = np.ravel_multi_index(tuple(codes), sizes)
+    phy = sub["gtdb_phylum"].fillna("__unassigned__").to_numpy()
+    occ = {p: set(cell[phy == p].tolist()) for p in np.unique(phy)}
+    total = set(cell.tolist())
+    owners: dict[int, set] = {}
+    for p, cs in occ.items():
+        for c in cs:
+            owners.setdefault(c, set()).add(p)
+    order = sorted(occ, key=lambda p: (-(phy == p).sum(), p))
+    rng = np.random.default_rng(seed)
+    rows, cum = [], set()
+    for p in order:
+        m = phy == p
+        cum |= occ[p]
+        null_mean = float("nan")
+        if m.sum() >= cfg["analysis"]["min_stratum_size"]:
+            null_mean = float((permutation_null(codes[:, m], sizes, n_perm, rng) > 0).sum(axis=1).mean())
+        rows.append({"phylum": p, "N": int(m.sum()), "cells occupied": len(occ[p]),
+                     "occupied (within-phylum null mean)": null_mean,
+                     "cells only this phylum occupies": sum(1 for c in occ[p] if owners[c] == {p}),
+                     "cumulative occupied (this + larger phyla)": len(cum),
+                     "cumulative share of all occupied": len(cum) / len(total) if total else float("nan")})
+    return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -252,36 +371,44 @@ def subset_name(traits: list[str]) -> str:
 
 
 def occupancy_grid(df: pd.DataFrame, cfg: Config, binning: str, level: str, temp_source: str,
-                   n_perm: int | None = None, seed_offset: int = 0, full: Occupancy | None = None) -> pd.DataFrame:
-    """Occupancy of every 4-/5-trait subset and the full panel in one configuration.
+                   n_perm: int | None = None, seed_offset: int = 0, precomputed: dict | None = None,
+                   nulls: tuple[str | None, ...] = (None,), cells_out: dict | None = None) -> pd.DataFrame:
+    """Occupancy of every 4-/5-trait subset and the full panel, one row per (subset, null).
 
-    Pass `full` (the full-panel result computed elsewhere) so the full map is computed once and
-    the grid row agrees exactly with the per-cell table.
+    `nulls` holds None (global) and/or GTDB ranks. `precomputed` maps (subset name, null name) to an
+    Occupancy already computed elsewhere (the full panels), so each map is computed exactly once and
+    every table agrees. If `cells_out` is a dict it is filled with {(subset name, null name): cells}.
     """
     a = cfg["analysis"]
     rows = []
     for j, (kind, traits) in enumerate(subset_list(cfg)):
         is_full = kind.endswith("(full)")
-        rng = np.random.default_rng(a["seed"] + seed_offset + j)
         sub = analysis_set(df, traits, binning, level, temp_source)
         strain_level_n = len(analysis_set(df, traits, binning, "strain", temp_source))
-        if is_full and full is not None:
-            occ = full
-        else:
-            occ = occupancy(sub, traits, cfg, binning, n_perm or (a["n_perm_full"] if is_full else a["n_perm_subset"]), rng)
-        no_genome = len(analysis_set(df, traits, binning, "strain", temp_source, require_genome=False))
-        rows.append({"panel": kind, "traits": subset_name(traits), "morphology_map": traits == cfg.morphology,
-                     "N_strains_with_genome": strain_level_n, "N_species": len(analysis_set(df, traits, binning, "species", temp_source)),
-                     "N_no_genome_requirement": no_genome, **occ.summary})
+        for i, null in enumerate(nulls):
+            name = null or "global"
+            rng = np.random.default_rng(a["seed"] + seed_offset + 100 * i + j)
+            key = (subset_name(traits), name)
+            if precomputed is not None and key in precomputed:
+                occ = precomputed[key]
+            else:
+                occ = occupancy(sub, traits, cfg, binning, n_perm or (a["n_perm_full"] if is_full else a["n_perm_subset"]),
+                                rng, stratify=null, keep_cells=cells_out is not None)
+            if cells_out is not None:
+                cells_out[key] = occ.cell_table
+            rows.append({"panel": kind, "traits": subset_name(traits), "morphology_map": traits == cfg.morphology,
+                         "N_strains_with_genome": strain_level_n, **occ.summary})
     return pd.DataFrame(rows)
 
 
-def capacity_table(df: pd.DataFrame, cfg: Config, binning: str = "coarse", level: str = "species") -> pd.DataFrame:
-    """N, cells and expected-count distribution for every trait subset of size 1..6 (no permutation needed)."""
+def capacity_table(df: pd.DataFrame, cfg: Config, binning: str = "coarse", level: str = "species",
+                   panel: list[str] | None = None) -> pd.DataFrame:
+    """N, cells and expected-count distribution for every trait subset of `panel` (no permutation needed)."""
     a = cfg["analysis"]
+    panel = panel or cfg.core
     rows = []
-    for k in range(1, len(cfg.core) + 1):
-        for traits in itertools.combinations(cfg.core, k):
+    for k in range(1, len(panel) + 1):
+        for traits in itertools.combinations(panel, k):
             traits = list(traits)
             sub = analysis_set(df, traits, binning, level)
             lv = {t: levels_for(cfg, t, binning) for t in traits}

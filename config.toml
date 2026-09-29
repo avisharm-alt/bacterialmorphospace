@@ -159,8 +159,10 @@ alkaliphile = "alkaliphile"
 # Panels
 # ---------------------------------------------------------------------------
 [panels]
-# core panel used for the occupancy analysis
+# core panel used for the occupancy analysis (216 coarse cells)
 core = ["gram", "shape", "motility", "spore", "oxygen", "temperature"]
+# second full panel without spore formation, the coverage bottleneck (108 coarse cells)
+no_spore = ["gram", "shape", "motility", "oxygen", "temperature"]
 morphology = ["gram", "shape", "motility", "spore"]
 # extra traits kept as columns and reported, but outside the occupancy analysis
 extra = ["ph", "halophily_level"]
@@ -203,3 +205,27 @@ n_perm_full = 10000        # permutations for the full-panel null
 n_perm_subset = 2000       # permutations for each 4-/5-trait subset
 min_expected_for_test = 3.0  # a cell is testable only if expected count >= this
 fdr_alpha = 0.05
+# Stratified nulls: trait columns are permuted only among species of the same GTDB taxon.
+strata_levels = ["phylum", "class", "order"]
+# Species in taxa with fewer species than this (in the analysed set) are excluded from that null
+# and reported, never silently kept: a 1-2 species stratum cannot be meaningfully shuffled.
+min_stratum_size = 5
+n_perm_phylum_occupancy = 1000
+# Extra diagnostic run only on cells that survive the order-level shuffle (not part of the survival
+# criterion): does a finer shuffle absorb them?
+survivor_diagnostic_levels = ["family"]
+
+# Known constraints, stated as positive controls rather than findings. The global null should flag
+# them; a phylogeny-aware null should not (their emptiness is explained by which clades carry which
+# traits). Identified after the first global-null run, so they are controls, not predictions.
+[[analysis.positive_controls]]
+panel = "core"
+name = "Gram-negative endospore-forming cocci"
+rationale = """Endospore formation is essentially restricted to Bacillota, which are overwhelmingly Gram-positive, and coccoid endospore formers are rare even there (Sporosarcina, itself motile and Gram-positive). The cell stacks three phylogenetic facts; an independence null cannot see any of them."""
+[analysis.positive_controls.cell]
+gram = "negative"
+shape = "coccus"
+motility = "no"
+spore = "yes"
+oxygen = "aerobe"
+temperature = "meso"

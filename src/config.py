@@ -31,6 +31,10 @@ class Config:
     def morphology(self) -> list[str]:
         return list(self.data["panels"]["morphology"])
 
+    @property
+    def no_spore(self) -> list[str]:
+        return list(self.data["panels"]["no_spore"])
+
 
 def load_config(path: str | Path | None = None) -> Config:
     p = Path(path) if path else ROOT / "config.toml"

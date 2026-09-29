@@ -3,7 +3,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.analysis import analysis_set, bh_qvalues, dereplicate, expected_counts, occupancy, permutation_null
+from src.analysis import (analysis_set, assign_strata, bh_qvalues, dereplicate, expected_counts, occupancy, permutation_null,
+                          phylum_occupancy)
 from src.config import load_config
 
 CFG = load_config()
@@ -32,6 +33,7 @@ def test_bh_matches_hand_computation():
 
 def _df(rows):
     base = {"gram": "negative", "shape": "rod", "motility": "yes", "spore": "no", "oxygen": "aerobe", "temperature": "meso",
+            "gtdb_phylum": "P1", "gtdb_class": "C1", "gtdb_order": "O1",
             "temperature_bin_source": "optimum", "genome_matched": True, "type_strain_bacdive": False,
             "gtdb_is_type_strain_of_species": False, "pref_order": 0, "gtdb_accession": "x"}
     out = []
@@ -102,3 +104,100 @@ def test_genus_level_keeps_one_strain_per_gtdb_genus():
               {"gtdb_species": "g2 a", "gtdb_genus": "g2"}])
     assert list(analysis_set(df, CFG.core, level="genus").bacdive_id) == [1, 2]
     assert len(analysis_set(df, CFG.core, level="species")) == 3
+
+
+
+# --- stratified null ------------------------------------------------------------------
+def test_stratified_expected_is_sum_of_per_stratum_products():
+    codes = np.array([[0, 0, 1, 1, 0, 1], [0, 0, 1, 1, 1, 0]])
+    strata = np.array([0, 0, 0, 0, 1, 1])
+    e = expected_counts(codes, (2, 2), strata)
+    # stratum 0: perfectly associated but marginals 1/2,1/2 -> 4*[.25]*4 ; stratum 1: 2*[.25]*4
+    assert np.allclose(e, [1.5, 1.5, 1.5, 1.5])
+    assert np.allclose(expected_counts(codes, (2, 2), None), expected_counts(codes, (2, 2), np.zeros(6, int)))
+
+
+def test_within_stratum_permutation_preserves_each_strata_marginals():
+    rng = np.random.default_rng(3)
+    n = 200
+    strata = rng.integers(0, 4, n)
+    codes = np.vstack([(strata % 2 == 0).astype(int), rng.integers(0, 3, n)])  # trait 0 is fixed by stratum
+    null = permutation_null(codes, (2, 3), 500, rng, strata)
+    # trait 0 is constant within strata, so its marginal (and the stratum-trait association) is untouched:
+    # cells (0, *) and (1, *) keep their row totals in every permutation
+    assert (null.reshape(500, 2, 3).sum(axis=2) == np.bincount(codes[0], minlength=2)).all()
+    assert np.allclose(null.mean(axis=0), expected_counts(codes, (2, 3), strata), rtol=0.1)
+
+
+def test_assign_strata_excludes_and_counts_small_strata():
+    df = pd.DataFrame({"gtdb_order": ["A"] * 6 + ["B"] * 2 + [None] * 5})
+    keep, ids, info = assign_strata(df, "order", min_size=5)
+    assert keep.tolist() == [True] * 6 + [False] * 2 + [True] * 5   # the 5 unassigned form their own stratum
+    assert info["N_used"] == 11 and info["species_excluded"] == 2 and info["strata_excluded"] == 1 and info["strata_used"] == 2
+    assert len(set(ids.tolist())) == 2
+    keep, ids, info = assign_strata(df, None, min_size=5)
+    assert keep.all() and ids is None and info["null"] == "global"
+
+
+def _clade_confounded(n_per=400, seed=5):
+    """Two clades: clade A all gram-negative and never spore-forming; clade B gram-positive, half spore-forming.
+    Gram-negative spore formers are absent only because of which clade carries which trait."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for i in range(n_per):
+        rows.append({"gram": "negative", "spore": "no", "gtdb_order": "A", "gtdb_species": f"a{i}"})
+        rows.append({"gram": "positive", "spore": rng.choice(["no", "yes"]), "gtdb_order": "B", "gtdb_species": f"b{i}"})
+    return _df(rows)
+
+
+def test_positive_control_logic_global_flags_clade_gap_but_order_null_does_not():
+    df = _clade_confounded()
+    g = occupancy(df, ["gram", "spore"], CFG, n_perm=500, keep_cells=True).cell_table.set_index(["gram", "spore"])
+    assert g.loc[("negative", "yes"), "empty_beyond_chance"]
+    o = occupancy(df, ["gram", "spore"], CFG, n_perm=500, keep_cells=True, stratify="order").cell_table.set_index(["gram", "spore"])
+    assert o.loc[("negative", "yes"), "expected"] == 0 and not o.loc[("negative", "yes"), "testable"]
+    assert not o["empty_beyond_chance"].any()
+
+
+def test_order_null_still_detects_a_gap_that_exists_within_orders():
+    rng = np.random.default_rng(6)
+    rows = []
+    for order in ("A", "B", "C"):
+        for i in range(400):
+            g = rng.choice(["negative", "positive"])
+            s = "no" if g == "negative" else rng.choice(["no", "yes"])   # gap within every order
+            rows.append({"gram": g, "spore": s, "gtdb_order": order, "gtdb_species": f"{order}{i}"})
+    o = occupancy(_df(rows), ["gram", "spore"], CFG, n_perm=500, keep_cells=True, stratify="order")
+    t = o.cell_table.set_index(["gram", "spore"])
+    assert t.loc[("negative", "yes"), "empty_beyond_chance"] and o.summary["N_used"] == 1200
+
+
+def test_phylum_occupancy_counts_exclusive_cells_and_cumulative_share():
+    rows = ([{"gram": "negative", "spore": "no", "gtdb_phylum": "Big", "gtdb_species": f"x{i}"} for i in range(10)]
+            + [{"gram": "positive", "spore": "yes", "gtdb_phylum": "Big", "gtdb_species": f"y{i}"} for i in range(10)]
+            + [{"gram": "positive", "spore": "no", "gtdb_phylum": "Small", "gtdb_species": f"z{i}"} for i in range(3)])
+    t = phylum_occupancy(_df(rows), ["gram", "spore"], CFG, n_perm=50).set_index("phylum")
+    assert t.loc["Big", "cells occupied"] == 2 and t.loc["Big", "cells only this phylum occupies"] == 2
+    assert t.loc["Small", "cells occupied"] == 1 and np.isnan(t.loc["Small", "occupied (within-phylum null mean)"])
+    assert t.loc["Small", "cumulative share of all occupied"] == 1.0
+
+
+
+def test_exclusion_of_small_strata_never_manufactures_an_empty_cell():
+    # the only gram-negative spore formers live in tiny orders; excluding those orders empties the cell
+    # among the kept species, but the cell is occupied in the full set and must not be flagged empty
+    rng = np.random.default_rng(8)
+    rows = []
+    for order in ("A", "B", "C"):
+        for i in range(400):
+            g = rng.choice(["negative", "positive"])
+            rows.append({"gram": g, "spore": "no" if g == "negative" else rng.choice(["no", "yes"]),
+                         "gtdb_order": order, "gtdb_species": f"{order}{i}"})
+    for j in range(6):  # six singleton orders holding the only gram-negative spore formers
+        rows.append({"gram": "negative", "spore": "yes", "gtdb_order": f"tiny{j}", "gtdb_species": f"t{j}"})
+    o = occupancy(_df(rows), ["gram", "spore"], CFG, n_perm=300, keep_cells=True, stratify="order")
+    t = o.cell_table.set_index(["gram", "spore"])
+    cell = t.loc[("negative", "yes")]
+    assert cell.observed == 0 and cell.observed_all_species == 6 and cell.emptied_by_exclusion
+    assert not cell.empty_beyond_chance and o.summary["cells_emptied_by_exclusion"] == 1
+    assert o.summary["species_excluded"] == 6

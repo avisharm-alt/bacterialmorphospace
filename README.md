@@ -91,8 +91,12 @@ re-run `all`. Versions are recorded in `reports/run_manifest.json` and at the to
 | pH (column only) | `Culture and growth conditions › culture pH` | acido < 5.5 / neutro 5.5–8.5 / alkali ≥ 8.5 | same |
 | Halophily (column only) | `Physiology and metabolism › halophily › halophily level` | curated category as given | NaCl growth tests kept raw in `nacl_tests_raw` |
 
-The **core panel** is the first six traits. pH (about 7% coverage) and curated halophily (under 0.5%) are kept as columns
-but excluded from the occupancy analysis.
+Two panels are analysed:
+- the **core panel**: the first six traits (216 coarse cells)
+- the **no-spore panel**: the same without spore formation (108 cells). Spore formation is the coverage bottleneck, and
+  dropping it more than doubles N.
+
+pH (about 7% coverage) and curated halophily (under 0.5%) are kept as columns but excluded from the occupancy analysis.
 
 ### Column conventions
 
@@ -136,6 +140,7 @@ In summary: split, fold case and accents, drop type-strain markers (`T`, `^T`, `
 
 ```bash
 datasets download genome accession --inputfile data/final/assembly_accessions_core_panel_species.txt
+datasets download genome accession --inputfile data/final/assembly_accessions_no_spore_panel_species.txt
 ```
 
 ## Occupancy analysis
@@ -146,11 +151,24 @@ datasets download genome accession --inputfile data/final/assembly_accessions_co
   - temperature from a reported optimum only
   - fine bins
   - one strain per GTDB genus
-- **Null:** each trait column is permuted independently, which preserves every marginal. For each cell, the report gives the
-  observed count, the expected count, the one-sided permutation p-value for "emptier than chance", and a BH q-value over
-  *testable* cells. A cell is testable when its expected count is at least `min_expected_for_test` (default 3).
-- **Headline category:** *empty beyond chance*, meaning observed 0, testable and q < α. Occupied cells that are significantly
-  depleted are reported separately, because with fixed marginals a real gap forces compensating depletion elsewhere.
+- **Nulls.** Four are run on every full map, and their per-cell q-values are reported side by side.
+  - **Global:** each trait column is permuted across all species. This preserves every marginal but ignores phylogeny, so it
+    flags combinations that are rare only because the traits are fixed in different clades.
+  - **Stratified (phylum, class, order):** each trait column is permuted only among species of the same GTDB taxon. The expected
+    count per cell is Σ over taxa n·∏ p(level within the taxon).
+  - **Order-level survivors are the only candidates.** A cell that fires globally but not at order level is phylogenetic structure.
+- **Small strata.** Taxa with fewer than `min_stratum_size` (default 5) species are excluded from that null and counted, never
+  silently kept. The exclusion can never create an empty cell: "empty beyond chance" requires the cell to be empty among
+  *all* species. Cells emptied only by the exclusion are labelled as such.
+- **Tests.** For each cell and null the report gives the observed count, the expected count, the one-sided permutation p-value
+  for "emptier than chance", and a BH q-value over *testable* cells (expected ≥ `min_expected_for_test`, default 3). The global
+  and order nulls are re-run with an independent seed.
+- **Positive control.** A known constraint is configured in `config.toml` (`[[analysis.positive_controls]]`): Gram-negative
+  endospore-forming cocci. The global null should flag it and the order null should not. The report checks this explicitly.
+- **Survivor diagnostic.** Cells that survive the order shuffle are re-tested with a family-level shuffle
+  (`survivor_diagnostic_levels`). This is a diagnostic only; it is not part of the survival criterion.
+- **Also reported:** occupied vs expected cells under every null, per-phylum occupancy, and the expected species per cell
+  for every map size.
 
 ## Layout
 
@@ -159,8 +177,8 @@ src/            pipeline modules
 tests/          unit tests (normalisation, traits, join, analysis)
 config.toml     every tunable choice
 data/raw/       cached API responses + GTDB download       (gitignored)
-data/interim/   extracted traits, unmatched log, unmapped values, snapshot info
-data/final/     strains.parquet (joined table), core-panel species table, accession lists
+data/interim/   extracted traits, unmatched log (gitignored), unmapped values, snapshot info
+data/final/     strains.parquet (joined table, gitignored), per-panel species tables, accession lists
 reports/        attrition_report.md, tables/*.tsv, run_manifest.json
 notebooks/      exploration only; nothing load-bearing
 ```
