@@ -1,6 +1,6 @@
 {
- "generated_at": "2026-09-29T05:15:44+00:00",
- "git_commit": "b44b2fbc37b09dea1b4c23a26eff523f7a93db59",
+ "generated_at": "2026-09-29T05:33:20+00:00",
+ "git_commit": "c3015ed02729efb277d4d771dc5a68f4e74324aa",
  "config_sha256": "96c49f9e4f4adf88c7fc3f37555528460db034b3ece56c5af2b8abfceacaa5a1",
  "regenerate": "python -m src.pipeline all",
  "bacdive": {
@@ -49,7 +49,9 @@
   "n_genomes": 878998,
   "n_genomes_with_strain_ids": 878899,
   "n_designation_keys": 771360,
-  "joined_at": "2026-09-29T05:12:52+00:00"
+  "n_phyla": 172,
+  "n_species": 189801,
+  "joined_at": "2026-09-29T05:27:02+00:00"
  },
  "outputs": {
   "data/final/strains.parquet": {

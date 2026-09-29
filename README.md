@@ -7,6 +7,14 @@ frequencies predict**?
 
 The deliverable is [`reports/attrition_report.md`](reports/attrition_report.md).
 
+**Result (BacDive API v2 snapshot of 2026-09, GTDB v232).** Bacterial trait space is sparser than independence predicts, and that
+sparsity is almost entirely phylogenetic.
+- **Core map.** 2,580 species occupy 90 of 216 six-trait cells, where independent traits would fill 117. The deficit shrinks from 27 to
+  5 cells as the permutation null is restricted to within phylum, class and order, and it is not significant at order level (P = 0.07).
+- **No novel constraints.** No trait combination is empty beyond what lineage structure explains.
+- **Power.** The order-level null could have detected a constraint that empties a combination expected to hold about 7 or more species.
+- **Scope.** Six coarse traits, and type strains only.
+
 ## What it does
 
 ```
@@ -79,7 +87,7 @@ sha256sum data/final/strains.parquet data/interim/unmatched_strains.tsv
 ```
 
 Snapshot: BacDive API v2 (record DOIs stamped `20260601`), GTDB v232,
-code `b44b2fb`.
+code `c3015ed` (unchanged since `b44b2fb`).
 
 | file | rows | sha256 (file bytes) | sha256 (row contents) |
 |---|---|---|---|
@@ -190,6 +198,9 @@ datasets download genome accession --inputfile data/final/assembly_accessions_no
   endospore-forming cocci. The global null should flag it and the order null should not. The report checks this explicitly.
 - **Survivor diagnostic.** Cells that survive the order shuffle are re-tested with a family-level shuffle
   (`survivor_diagnostic_levels`). This is a diagnostic only; it is not part of the survival criterion.
+- **Power.** `detectable_zero()` gives the smallest expected count E at which a truly empty cell must reach q < α. With m testable
+  cells, BH guarantees this when P(null count = 0) ≤ α/m, which is about E ≥ ln(m/α) under Poisson. The reported minimum
+  detectable constraint is the largest of that bound, the empirical permutation threshold and the testability floor.
 - **Also reported:** occupied vs expected cells under every null, per-phylum occupancy, and the expected species per cell
   for every map size.
 

@@ -1,0 +1,5 @@
+panel	null	species used	cells	testable cells (m)	E needed, guaranteed (Poisson ln(m/α))	E needed, best case (Poisson ln(1/α))	E needed, guaranteed (empirical, this null)	testability floor	minimum detectable constraint (E)	as share of species	cells with E >= minimum detectable constraint	share of expected species mass in those cells	cells where a true zero would be detected on its own (empirical p0 <= α/m)	cells where a true zero could be detected at best (E >= floor, p0 <= α)
+core panel (6 traits)	global	2580	216	69	7.22983877815125	2.995732273553991	7.305822828932569	3.0	7.305822828932569	0.0028317142747800654	41	0.9149620251937668	41	69
+core panel (6 traits)	order	2423	216	52	6.946975992135418	2.995732273553991	5.511551865972423	3.0	6.946975992135418	0.0028670969839601395	37	0.946299837190641	42	52
+no-spore panel (5 traits)	global	5634	108	54	6.984716320118266	2.995732273553991	7.3684051878012955	3.0	7.3684051878012955	0.0013078461462196123	44	0.9839278410698062	44	54
+no-spore panel (5 traits)	order	5416	108	49	6.887552571664617	2.995732273553991	5.70041541850581	3.0	6.887552571664617	0.0012717046845761848	39	0.98481131119791	44	49

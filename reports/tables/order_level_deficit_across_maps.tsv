@@ -1,0 +1,23 @@
+traits	occupied	null_occupied_mean	p_fewer_occupied_than_null	q across maps (BH)
+gram + shape + motility + spore	23	22.6165	0.8325837081459271	0.9640442936426524
+gram + shape + motility + oxygen	34	35.7955	0.013493253373313344	0.09895052473763118
+gram + shape + motility + temperature	30	30.9435	0.3778110944527736	0.6894199958844107
+gram + shape + spore + oxygen	32	32.4065	0.5327336331834083	0.6894199958844107
+gram + shape + spore + temperature	26	26.1035	0.6121939030484758	0.7482369926148037
+gram + shape + oxygen + temperature	40	40.6195	0.47626186906546725	0.6894199958844107
+gram + motility + spore + oxygen	24	23.887	1.0	1.0
+gram + motility + spore + temperature	21	19.927	0.9900049975012494	1.0
+gram + motility + oxygen + temperature	34	32.8545	0.9565217391304348	1.0
+gram + spore + oxygen + temperature	25	25.8185	0.392303848075962	0.6894199958844107
+shape + motility + spore + oxygen	32	34.0475	0.06346826586706647	0.23402584422074676
+shape + motility + spore + temperature	24	26.6225	0.07446276861569215	0.23402584422074676
+shape + motility + oxygen + temperature	39	40.5735	0.2798600699650175	0.6841023932478206
+shape + spore + oxygen + temperature	30	34.009	0.01249375312343828	0.09895052473763118
+motility + spore + oxygen + temperature	28	28.5645	0.4702648675662169	0.6894199958844107
+gram + shape + motility + spore + oxygen	58	58.435	0.5147426286856571	0.6894199958844107
+gram + shape + motility + spore + temperature	43	43.603	0.4827586206896552	0.6894199958844107
+gram + shape + motility + oxygen + temperature	66	69.3609	0.11438856114388561	0.31456854314568544
+gram + shape + spore + oxygen + temperature	49	53.052	0.044977511244377814	0.23402584422074676
+gram + motility + spore + oxygen + temperature	46	47.143	0.3378310844577711	0.6894199958844107
+shape + motility + spore + oxygen + temperature	52	57.533	0.0074962518740629685	0.09895052473763118
+gram + shape + motility + spore + oxygen + temperature	83	87.9398	0.06669333066693331	0.23402584422074676
