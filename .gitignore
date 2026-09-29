@@ -1,0 +1,15 @@
+# credentials / local config
+.env
+
+# cached API responses and large downloads (re-creatable via `python -m src.pipeline fetch`)
+data/raw/
+
+# large intermediates (re-creatable from data/raw)
+data/interim/*.parquet
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
