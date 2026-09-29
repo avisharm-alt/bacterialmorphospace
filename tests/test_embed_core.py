@@ -503,7 +503,7 @@ def _fake_volume(tmp_path, misalign=False, n=36, dim=48, seed=0):
         pool = np.stack([centres[ph] + 8 * (gc_target - .5) * gc_dir + 0.3 * rng.normal(size=dim) for _ in range(100)]).astype(np.float32)
         vectors[acc] = pool
         rows.append({"acc": acc, "motility": "yes" if rng.random() < 0.5 else "no", "group": ph})
-        json.dump({"acc": acc, "pool_n": 100, "windows": wins}, open(emb / f"{acc}__meta.json", "w"))
+        json.dump({"acc": acc, "pool_n": 100, "windows": wins, "sampling": core.SAMPLING}, open(emb / f"{acc}__meta.json", "w"))
     accs = [r["acc"] for r in rows]
     for j, acc in enumerate(accs):
         src = vectors[accs[(j + 1) % n]] if misalign else vectors[acc]  # misalign: genome j gets genome j+1's embeddings
@@ -563,3 +563,132 @@ def test_diagnose_entrypoint_prints_every_requested_section(tmp_path, monkeypatc
                    "FOLD STRUCTURE", "prev_test", "SHUFFLED-LABEL NULLS", "shuffle within phylum", "GC-CONTENT-ONLY"):
         assert needle in out, needle
     assert (tmp_path / "rep" / "tables" / "evo2_sweep_diagnostics.json").exists()
+
+
+# --- trait choice: within-phylum variance ------------------------------------------------------------
+def test_variance_decomposition_extremes():
+    determined = core.variance_decomposition(["a"] * 10 + ["b"] * 10, ["g1"] * 10 + ["g2"] * 10)
+    assert determined["within_share"] == 0 and determined["off_majority"] == 0
+    free = core.variance_decomposition(["a", "b"] * 20, ["g1"] * 20 + ["g2"] * 20)
+    assert free["within_share"] == pytest.approx(1.0) and free["off_majority"] == 20
+
+
+def test_trait_targets_flags_only_groups_with_enough_of_both_classes():
+    rows, groups = [], []
+    for g, n, k in (("A", 100, 50), ("B", 100, 0), ("C", 40, 10), ("D", 20, 10)):  # (group, size, n motile)
+        for i in range(n):
+            rows.append({"motility": "yes" if i < k else "no", "shape": "rod" if i % 5 else "coccus"})
+            groups.append(g)
+    t = {x["target"]: x for x in core.trait_targets(rows, ["motility", "shape"], groups, min_class=10)}
+    mot = t["motility: yes vs no"]
+    assert mot["per_group"]["A"]["testable"] and not mot["per_group"]["B"]["testable"]  # B has no motile genomes
+    assert not mot["per_group"]["C"]["testable"]  # 10 motile < 15
+    assert not mot["per_group"]["D"]["testable"]  # only 20 genomes
+    assert mot["testable_groups"] == 1 and mot["testable_genomes"] == 100
+    assert "shape: coccus vs rod" in t  # a two-class trait gives one target, minority class positive
+
+
+def test_auc_se_shrinks_with_n_and_is_nan_without_both_classes():
+    assert core.auc_se(50, 50) > core.auc_se(500, 500) > 0
+    assert core.auc_se(100, 100) == pytest.approx(0.0388, abs=0.003)
+    assert math.isnan(core.auc_se(1, 50)) and math.isnan(core.auc_se(0, 50))
+
+
+# --- reliability estimators against known truth --------------------------------------------------------
+def _pools(rho=0.0, g=50, p=100, d=120, sb=1.0, sw=3.0, seed=0):
+    np = pytest.importorskip("numpy")
+    rng = np.random.default_rng(seed)
+    mu = 40 * rng.normal(size=d) + sb * rng.normal(size=(g, d))  # a big shared component + genome-specific means
+    e = rng.normal(size=(g, p, d))
+    x = np.zeros_like(e)
+    x[:, 0] = e[:, 0]
+    for t in range(1, p):
+        x[:, t] = rho * x[:, t - 1] + np.sqrt(1 - rho ** 2) * e[:, t]
+    return (mu[:, None, :] + sw * x).astype(np.float32)
+
+
+def test_cosine_report_shows_shared_component_and_its_removal():
+    c = core.cosine_report(_pools(g=40).mean(1))
+    assert c["raw"] > 0.99 and abs(c["centred"]) < 0.1 and abs(c["centred_scaled"]) < 0.1
+
+
+def test_reliability_recovers_the_true_within_between_ratio_for_independent_windows():
+    pools = _pools()
+    r = core.reliability_curve(pools, [1, 5, 10, 25], [1, 5, 10, 25], [1, 5, 10, 25, 100], reps=6, n_boot=20, seed=1)
+    for n in (1, 5, 10, 25):
+        truth = (3.0 ** 2 / n) / 1.0
+        for kind in ("random", "systematic"):
+            assert r[kind][n]["ratio"] == pytest.approx(truth, rel=0.25), (kind, n)
+        lo, hi = r["systematic"][n]["ratio_ci"]
+        assert lo <= r["systematic"][n]["ratio"] <= hi
+        assert r["model"][n]["ratio"] == pytest.approx(truth, rel=0.25)
+    assert r["model"][100]["extrapolated"] and not r["model"][10]["extrapolated"]
+    ratios = [r["systematic"][n]["ratio"] for n in (1, 5, 10, 25)]
+    assert ratios == sorted(ratios, reverse=True)  # more windows, less within-genome variance
+    rel = [r["systematic"][n]["reliability"] for n in (1, 5, 10, 25)]
+    assert rel == sorted(rel) and 0 < rel[0] < rel[-1] < 1
+
+
+def test_even_spacing_beats_random_windows_only_when_windows_are_spatially_correlated():
+    iid = core.reliability_curve(_pools(rho=0.0), [10], [10], [10], reps=6, n_boot=5, seed=1)["systematic"][10]["systematic_gain"]
+    ar = core.reliability_curve(_pools(rho=0.9), [10], [10], [10], reps=6, n_boot=5, seed=1)["systematic"][10]["systematic_gain"]
+    assert iid == pytest.approx(1.0, abs=0.15) and ar > 2.0
+
+
+def test_reliability_skips_depths_that_cannot_have_disjoint_halves():
+    r = core.reliability_curve(_pools(g=20, d=30), [50, 60, 100], [50, 60, 100, 30], [100], reps=2, n_boot=3)
+    assert set(r["random"]) == {50} and set(r["systematic"]) == {50}  # 60 & 100: 2n > pool; 30: does not divide 100
+
+
+def test_flattens_at_picks_the_knee_and_reports_noise_only_curves_as_flat():
+    xs = [1, 2, 5, 10, 20, 50]
+    assert core.flattens_at(xs, [.2, .5, .8, .9, .91, .92])["n"] == 10
+    assert core.flattens_at(xs, [9, 4, 2, 1, .9, .9], higher_is_better=False)["n"] == 10  # needs <= 1.3 (95% of the drop)
+    flat = core.flattens_at(xs, [.70, .71, .70, .72, .71, .70], noise=0.02)
+    assert flat["flat_within_noise"] and flat["n"] is None
+
+
+def test_gc_quality_is_high_when_embeddings_encode_gc_and_low_when_they_do_not():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("sklearn")
+    rng = np.random.default_rng(0)
+    gc = rng.uniform(0.3, 0.7, 60)
+    groups = np.array([f"g{i % 6}" for i in range(60)])
+    signal = np.outer(gc, rng.normal(size=30)) + 0.05 * rng.normal(size=(60, 30))
+    assert core.gc_quality(signal, gc, groups)["spearman"] > 0.9
+    assert abs(core.gc_quality(rng.normal(size=(60, 30)), gc, groups)["spearman"]) < 0.5
+
+
+def test_reliability_run_on_a_fake_volume_and_the_entrypoint_prints_everything(tmp_path, monkeypatch, capsys):
+    pytest.importorskip("sklearn")
+    m = _patched(monkeypatch, tmp_path)
+    rows = _fake_volume(tmp_path)
+    d = m._reliability_run(rows, 1, 3, 5)
+    assert d["n_genomes"] == 36 and d["grid"] == [1, 2, 4, 5, 10, 20, 25, 50, 100]
+    sysm = d["curve"]["systematic"]
+    assert sysm[1]["ratio"] > sysm[50]["ratio"] and set(sysm) == {1, 2, 4, 5, 10, 20, 25, 50}
+    assert set(d["anchors"]) == set(d["grid"]) and len(d["anchors"][100]["spearman"]) == 1
+    assert d["curve"]["model"][100]["extrapolated"]
+    # a missing window pool is refused with a count, before any work
+    (tmp_path / "embeddings" / f"{rows[0]['acc']}__windows.npy").unlink()
+    with pytest.raises(RuntimeError, match=r"35 of 36 genomes have a saved window pool"):
+        m._reliability_run(rows, 1, 3, 5)
+
+    stub = type("F", (), {"remote": staticmethod(lambda *a, **k: d)})()
+    monkeypatch.setattr(m, "reliability_run", stub)
+    g = tmp_path / "g.tsv"
+    g.write_text("acc\tgroup\tmotility\n" + "".join(f"{r['acc']}\tother\t{r['motility']}\n" for r in rows))
+    panel = tmp_path / "panel.tsv"
+    lines = ["ncbi_assembly_accession\tassembly_genbank\tgtdb_phylum\tgram\tshape\tmotility\tspore\toxygen\ttemperature\n"]
+    for i in range(120):
+        lines.append(f"GCF_{i:09d}.1\t\t{'P1' if i % 2 else 'P2'}\t{'negative' if i % 3 else 'positive'}\t{'rod' if i % 4 else 'coccus'}\t"
+                     f"{'yes' if i % 5 < 2 else 'no'}\t{'yes' if i % 7 == 0 else 'no'}\t{'aerobe' if i % 3 else 'anaerobe'}\t{'meso' if i % 9 else 'thermo'}\n")
+    panel.write_text("".join(lines))
+    m.reliability.info.raw_f(panel=str(panel), genomes=str(g), reports=str(tmp_path / "rep"))
+    out = capsys.readouterr().out
+    for needle in ("WITHIN-PHYLUM VARIANCE BY TRAIT", "motility: yes vs no", "testable groups", "SAMPLING-DEPTH RELIABILITY",
+                   "raw", "mean-centred", "within/between", "GC Spearman", "WHERE EACH CURVE FLATTENS",
+                   "split-half reliability", "motility AUC (ungrouped)", "even spacing vs random windows"):
+        assert needle in out, needle
+    assert (tmp_path / "rep" / "tables" / "evo2_depth_reliability.json").exists()
+    assert (tmp_path / "rep" / "tables" / "trait_within_phylum_variance.tsv").exists()

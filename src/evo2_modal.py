@@ -524,6 +524,61 @@ def _diagnose_sweep(rows: list[dict], depths: list[int], n_splits: int, n_perm: 
             "gc_baseline": gc_block, "pairing_control": {"depth": top, **pairing}, "depths": per_depth, "n_perm": n_perm}
 
 
+DEPTH_GRID = [1, 2, 4, 5, 10, 20, 25, 50, 100]  # divisors of the 100-window pool, so every depth is an evenly spaced subset
+
+
+@app.function(image=cpu_image, volumes={OUT_DIR: out_vol}, timeout=3600, cpu=4, memory=16384)
+def reliability_run(rows: list[dict], seed: int, reps: int, n_boot: int) -> dict:
+    return _plain_call(_reliability_run, rows, seed, reps, n_boot)
+
+
+def _reliability_run(rows: list[dict], seed: int, reps: int, n_boot: int) -> dict:
+    """Free (CPU, existing checkpoints) sampling-depth study built from the saved 100-window pools."""
+    import json
+
+    import numpy as np
+    from joblib import Parallel, delayed
+
+    out_vol.reload()
+    accs = [r["acc"] for r in rows]
+    missing = [a for a in accs if not (os.path.exists(f"{EMB_DIR}/{a}__windows.npy") and os.path.exists(f"{EMB_DIR}/{a}__meta.json"))]
+    if not rows or missing:
+        raise RuntimeError(f"{len(accs) - len(missing)} of {len(accs)} genomes have a saved window pool + meta "
+                           f"(missing e.g. {missing[:3]}); the sweep saves them, embed_all does not")
+    metas = [json.load(open(f"{EMB_DIR}/{a}__meta.json")) for a in accs]
+    stale = [a for a, m in zip(accs, metas) if m.get("sampling") != core.SAMPLING]
+    if stale:
+        raise RuntimeError(f"{len(stale)} genomes were sampled with a different scheme (e.g. {stale[:3]})")
+    pools = np.stack([np.load(f"{EMB_DIR}/{a}__windows.npy") for a in accs])  # (genomes, 100, 4096)
+    g, pool_n, _ = pools.shape
+    grid = [n for n in DEPTH_GRID if n <= pool_n and pool_n % n == 0]
+    y = np.array([r["motility"] == "yes" for r in rows])
+    groups = np.array([r["group"] for r in rows])
+    gc = np.array([core.gc_content(f"{GENOME_DIR}/{a}.fna.gz") for a in accs])
+
+    curve = core.reliability_curve(pools, grid, grid, grid, reps=reps, n_boot=n_boot, seed=seed)
+
+    # anchors: GC prediction (out-of-phylum) and ungrouped motility AUC, on the same evenly spaced subsets
+    tasks = []
+    for n in grid:
+        stride = pool_n // n
+        offsets = sorted({int(o) for o in np.linspace(0, stride - 1, min(5, stride))})
+        for o in offsets:
+            tasks.append((n, o, pools[:, np.arange(n) * stride + o].mean(1)))
+
+    def one(n, o, X):
+        return n, o, core.gc_quality(X, gc, groups), core.ungrouped_auc(X, y, 5, repeats=2, seed=seed)
+
+    res = Parallel(n_jobs=4)(delayed(one)(*t) for t in tasks)
+    anchors = {}
+    for n, o, gq, mo in res:
+        a = anchors.setdefault(n, {"spearman": [], "r2": [], "motility_auc": [], "motility_cv_sd": []})
+        a["spearman"].append(gq["spearman"]), a["r2"].append(gq["r2"])
+        a["motility_auc"].append(mo["auc_mean"]), a["motility_cv_sd"].append(mo["auc_sd_over_repeats"])
+    return {"grid": grid, "n_genomes": g, "pool_n": pool_n, "curve": curve, "anchors": anchors,
+            "gc_range": [float(gc.min()), float(gc.max())]}
+
+
 # ---------------------------------------------------------------------------
 # Local helpers
 # ---------------------------------------------------------------------------
@@ -821,3 +876,90 @@ def diagnose(panel: str = PANEL, genomes: str = "reports/tables/evo2_sweep_genom
     print(f"  GC range {g['gc_range'][0]:.2f}-{g['gc_range'][1]:.2f}; Spearman(GC, motile) = {g['spearman_gc_vs_motility']:.3f}; "
           f"grouped-CV AUC = {g['cv']['auc_mean']:.3f} ± {g['cv']['auc_std']:.3f}; per-fold AUCs " + ", ".join(f"{v:.2f}" for v in g['fold_aucs']))
     print(f"\nsaved {reports}/tables/evo2_sweep_diagnostics.json  (CPU only, no GPU spend)")
+
+
+def _trait_report(panel: str, reports: str, traits: list[str]) -> list[dict]:
+    """Which trait has the most WITHIN-phylum variance? Local, stdlib only: reads the panel TSV."""
+    rows = _read_panel(panel)
+    groups = core.pool_groups([r["gtdb_phylum"] for r in rows])
+    tab = core.trait_targets(rows, traits, groups)
+    tab.sort(key=lambda t: -t["gini_within"])
+    print(f"=== WITHIN-PHYLUM VARIANCE BY TRAIT: {len(rows)} panel genomes, {len(set(groups))} pooled groups (as in the CV) ===")
+    print("  within share = fraction of the trait's variance that phylum does NOT explain; off-majority = genomes that disagree with")
+    print("  their own group's majority (the within-group information a model could learn); testable group = >= 30 genomes with")
+    print("  >= 15 of each class, so a held-out AUC inside that group can be scored.")
+    print(f"  {'binary target':30s} {'prev':>5} {'Gini within':>11} {'within share':>12} {'off-majority':>14} {'testable groups':>15} {'genomes in them':>15}")
+    for t in tab:
+        print(f"  {t['target']:30s} {t['prevalence']:>5.0%} {t['gini_within']:>11.3f} {t['within_share']:>12.1%} "
+              f"{t['off_majority']:>6} ({t['off_majority_frac']:>4.0%}) {t['testable_groups']:>15} {t['testable_genomes']:>15}")
+    for t in tab[:3]:
+        print(f"\n  {t['target']}: per-group detail (SE = Hanley-McNeil SE of a within-group AUC of 0.70 using every panel genome of the group)")
+        for gname, v in sorted(t["per_group"].items(), key=lambda kv: -kv[1]["n"]):
+            se = f"{v['se_at_full_panel']:.3f}" if v["se_at_full_panel"] == v["se_at_full_panel"] else "  n/a"
+            print(f"    {gname:20s} n={v['n']:>4} positive={v['n_positive']:>4} ({v['prevalence']:>4.0%})  testable={str(v['testable']):5s} SE={se}")
+    _write_tsv(f"{reports}/tables/trait_within_phylum_variance.tsv", tab,
+               ["target", "prevalence", "n_positive", "gini_total", "gini_within", "within_share", "off_majority",
+                "off_majority_frac", "testable_groups", "testable_genomes"])
+    return tab
+
+
+def _first_at_least(xs, ys, thr):
+    return next((x for x, y in zip(xs, ys) if y >= thr), None)
+
+
+@app.local_entrypoint()
+def reliability(panel: str = PANEL, genomes: str = "reports/tables/evo2_sweep_genomes.tsv", seed: int = 20260929,
+                reps: int = 10, n_boot: int = 100, reports: str = "reports", traits_only: bool = False):
+    """Sampling-depth reliability curve + which trait has the most within-phylum variance. CPU only, no GPU."""
+    import json
+    import statistics as st
+
+    _trait_report(panel, reports, ["gram", "shape", "motility", "spore", "oxygen", "temperature"])
+    if traits_only:
+        return
+    with open(genomes, newline="") as f:
+        rows = [{"acc": r["acc"], "motility": r["motility"], "group": r["group"]} for r in csv.DictReader(f, delimiter="\t")]
+    d = reliability_run.remote(rows, seed, reps, n_boot)
+    Path(f"{reports}/tables").mkdir(parents=True, exist_ok=True)
+    Path(f"{reports}/tables/evo2_depth_reliability.json").write_text(json.dumps(d, indent=2, sort_keys=True, default=str) + "\n")
+
+    c, grid = d["curve"], d["grid"]
+    cos = c["cosine"]
+    print(f"\n=== SAMPLING-DEPTH RELIABILITY: {d['n_genomes']} genomes, pool of {d['pool_n']} evenly spaced windows each ===")
+    print(f"  mean cosine between different genomes:  raw {cos['raw']:.4f}  ->  mean-centred {cos['centred']:.4f}  ->  centred + per-dim scaled {cos['centred_scaled']:.4f}")
+    print("  (variances below are computed in that centred, scaled space; the shared component is removed)")
+    print(f"  per-window variance {c['per_window_variance']:.0f}, between-genome variance {c['between_full']:.0f} (sum over {c['dims_effective']:.0f} standardised dims)")
+    print(f"\n  {'n':>4} | {'within/between':>26} | {'random-subset':>13} | {'reliability':>24} | {'GC Spearman':>11} {'GC R2':>7} | {'motility AUC (ungrouped)':>24}")
+    sysm, rnd, mod, an = c["systematic"], c["random"], c["model"], d["anchors"]
+    xs, rel, ratio = [], [], []
+    for n in grid:
+        e = sysm.get(n)
+        m = mod[n]
+        ratio_v, rel_v = (e["ratio"], e["reliability"]) if e else (m["ratio"], m["reliability"])
+        xs.append(n), rel.append(rel_v), ratio.append(ratio_v)
+        a = an[n]
+        rng_txt = f"{ratio_v:>7.3f} [{e['ratio_ci'][0]:.3f},{e['ratio_ci'][1]:.3f}]" if e else f"{ratio_v:>7.3f} (model, extrapolated)"
+        rel_txt = f"{rel_v:>6.3f} [{e['reliability_ci'][0]:.3f},{e['reliability_ci'][1]:.3f}]" if e else f"{rel_v:>6.3f} (model)"
+        rnd_txt = f"{rnd[n]['ratio']:>13.3f}" if n in rnd else f"{'-':>13}"
+        print(f"  {n:>4} | {rng_txt:>26} | {rnd_txt} | {rel_txt:>24} | {st.mean(a['spearman']):>11.3f} {st.mean(a['r2']):>7.3f} | "
+              f"{st.mean(a['motility_auc']):>8.3f} ± {(st.stdev(a['motility_auc']) if len(a['motility_auc']) > 1 else 0):.3f}")
+    gains = [(n, sysm[n]["systematic_gain"]) for n in grid if n in sysm and "systematic_gain" in sysm[n]]
+    print("  even spacing vs random windows (within-variance ratio, >1 = even spacing wins): " + ", ".join(f"n={n}: {g:.2f}" for n, g in gains))
+    print("  n=100 has no disjoint halves in a pool of 100, so it comes from the per-window-variance model (within = per-window variance / n).")
+
+    def noise(key, sdkey=None):
+        return max(st.stdev(an[n][key]) if len(an[n][key]) > 1 else 0.0 for n in grid) if key else 0.0
+
+    print("\n  WHERE EACH CURVE FLATTENS (95% of the total gain from n=1 to the best n; 'flat' = total gain within 2x noise):")
+    fl = core.flattens_at(xs, rel, True)
+    print(f"    split-half reliability : n = {fl['n']}   (reliability >= 0.90 at n = {_first_at_least(xs, rel, .90)}, >= 0.95 at n = {_first_at_least(xs, rel, .95)}, >= 0.99 at n = {_first_at_least(xs, rel, .99)})")
+    fr = core.flattens_at(xs, ratio, False)
+    print(f"    within/between ratio   : n = {fr['n']}   (ratio <= 0.10 at n = {next((x for x, y in zip(xs, ratio) if y <= .10), None)}, <= 0.05 at n = {next((x for x, y in zip(xs, ratio) if y <= .05), None)})")
+    for name, key in (("GC Spearman", "spearman"), ("GC R^2", "r2")):
+        ys = [st.mean(an[n][key]) for n in grid]
+        f = core.flattens_at(xs, ys, True, noise=noise(key))
+        print(f"    {name:23s}: " + ("flat within noise from n=1" if f["flat_within_noise"] else f"n = {f['n']}") + f"   (n=1: {ys[0]:.3f}, best: {max(ys):.3f})")
+    ys = [st.mean(an[n]["motility_auc"]) for n in grid]
+    f = core.flattens_at(xs, ys, True, noise=max(noise("motility_auc"), max(st.mean(an[n]["motility_cv_sd"]) for n in grid)))
+    print(f"    motility AUC (ungrouped): " + ("no depth effect detectable (flat within noise)" if f["flat_within_noise"] else f"n = {f['n']}") + f"   (n=1: {ys[0]:.3f}, best: {max(ys):.3f})")
+    print(f"\nsaved {reports}/tables/evo2_depth_reliability.json and trait_within_phylum_variance.tsv  (CPU only, no GPU spend)")

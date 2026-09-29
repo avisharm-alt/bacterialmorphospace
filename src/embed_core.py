@@ -438,6 +438,236 @@ def pairing_control(X, gc, groups, n_splits: int = 5, alpha: float = 1000.0, see
     return {"spearman_r": r_of(gc), "shuffled_pairing_r": r_of(gc[rng.permutation(len(gc))])}
 
 
+# ---------------------------------------------------------------------------
+# Trait choice: how much of each trait's variance is within phylum?
+# ---------------------------------------------------------------------------
+def _gini(counts) -> float:
+    n = sum(counts)
+    return 1 - sum((c / n) ** 2 for c in counts) if n else 0.0
+
+
+def variance_decomposition(labels: list, groups: list) -> dict:
+    """Split a categorical trait's variance (Gini impurity) into between- and within-group parts.
+
+    `within_share` is the fraction of the trait's variance that group identity does NOT explain.
+    `off_majority` counts genomes that disagree with their own group's majority class: the amount of
+    within-group information a classifier could learn from. High share on a very imbalanced trait
+    (86% rods, 93% mesophiles) is still little absolute variance, so both are reported.
+    """
+    from collections import Counter
+
+    n = len(labels)
+    total = Counter(labels)
+    by: dict = {}
+    for lab, g in zip(labels, groups):
+        by.setdefault(g, Counter())[lab] += 1
+    g_total = _gini(list(total.values()))
+    g_within = sum(sum(c.values()) / n * _gini(list(c.values())) for c in by.values())
+    off = sum(sum(c.values()) - max(c.values()) for c in by.values())
+    return {"n": n, "gini_total": g_total, "gini_within": g_within,
+            "within_share": g_within / g_total if g_total else float("nan"),
+            "off_majority": off, "off_majority_frac": off / n, "majority_baseline": max(total.values()) / n}
+
+
+def auc_se(n_pos: int, n_neg: int, auc: float = 0.7) -> float:
+    """Hanley-McNeil standard error of an AUC estimated on n_pos positives and n_neg negatives."""
+    if n_pos < 2 or n_neg < 2:
+        return float("nan")
+    q1, q2 = auc / (2 - auc), 2 * auc * auc / (1 + auc)
+    var = (auc * (1 - auc) + (n_pos - 1) * (q1 - auc * auc) + (n_neg - 1) * (q2 - auc * auc)) / (n_pos * n_neg)
+    return math.sqrt(var)
+
+
+def trait_targets(rows: list[dict], traits: list[str], groups: list[str], min_class: int = 100,
+                  min_group: int = 30, min_each_class: int = 15, auc_for_se: float = 0.7) -> list[dict]:
+    """One row per binary target (a two-class trait, or each class of a multi-class trait vs the rest).
+
+    A group is `testable` when holding it out leaves a within-group ranking that can be scored:
+    at least `min_group` genomes with at least `min_each_class` of each class. `se_at_full_panel` is
+    the Hanley-McNeil SE of that held-out AUC if every panel genome of the group is used.
+    """
+    from collections import Counter
+
+    out = []
+    for t in traits:
+        vals = [r[t] for r in rows]
+        cls = Counter(vals)
+        if len(cls) == 2:
+            targets = [(t, min(cls, key=cls.get), f"{t}: {min(cls, key=cls.get)} vs {max(cls, key=cls.get)}")]
+        else:
+            targets = [(t, c, f"{t}: {c} vs rest") for c, k in cls.most_common() if k >= min_class]
+        for _, pos, name in targets:
+            y = [v == pos for v in vals]
+            dec = variance_decomposition(y, groups)
+            per_group = {}
+            for g in sorted(set(groups)):
+                k = sum(1 for yy, gg in zip(y, groups) if gg == g)
+                p_ = sum(1 for yy, gg in zip(y, groups) if gg == g and yy)
+                per_group[g] = (k, p_)
+            testable = {g: (k, p_) for g, (k, p_) in per_group.items()
+                        if k >= min_group and p_ >= min_each_class and k - p_ >= min_each_class}
+            out.append({"target": name, "prevalence": sum(y) / len(y), "n_positive": sum(y), **dec,
+                        "testable_groups": len(testable),
+                        "testable_genomes": sum(k for k, _ in testable.values()),
+                        "per_group": {g: {"n": k, "n_positive": p_, "prevalence": p_ / k,
+                                          "testable": g in testable,
+                                          "se_at_full_panel": auc_se(p_, k - p_, auc_for_se)}
+                                      for g, (k, p_) in per_group.items()}})
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Sampling-depth reliability: how much does a genome's vector move with WHICH windows are drawn?
+# ---------------------------------------------------------------------------
+def cosine_report(mu) -> dict:
+    """Mean cosine between different genomes' vectors: raw, mean-centred, and centred + per-dimension scaled.
+
+    Raw vectors share a huge common component (cosine ~1 between unrelated genomes), so any raw
+    cosine-based reliability is flat for trivial reasons. Centring across genomes removes that shared
+    direction; scaling then gives every dimension equal weight, as StandardScaler does for the classifier.
+    """
+    import numpy as np
+
+    mu = np.asarray(mu, dtype=np.float64)
+
+    def mean_offdiag_cos(M):
+        Z = M / np.linalg.norm(M, axis=1, keepdims=True)
+        C = Z @ Z.T
+        return float((C.sum() - np.trace(C)) / (len(M) * (len(M) - 1)))
+
+    centred = mu - mu.mean(0)
+    s = centred.std(0, ddof=1)
+    s[s < 1e-8] = 1.0
+    return {"raw": mean_offdiag_cos(mu), "centred": mean_offdiag_cos(centred), "centred_scaled": mean_offdiag_cos(centred / s)}
+
+
+def _scale_from(mu):
+    import numpy as np
+
+    s = np.asarray(mu, dtype=np.float64).std(0, ddof=1)
+    s[s < 1e-8] = 1.0
+    return s
+
+
+def _wb(a, b, s, rows=None):
+    """Within- and between-genome variance (summed over standardised dimensions) from two disjoint draws.
+
+    a, b: (reps, genomes, dims) means of two disjoint n-window subsets of the same genome.
+    within  = E ||a - b||^2 / 2                        (variance of one n-window vector about its genome's mean)
+    between = Cov_genomes(a, b)                          (the shared, genome-specific part; noise cancels)
+    """
+    import numpy as np
+
+    if rows is not None:
+        a, b = a[:, rows], b[:, rows]
+    a, b = a / s, b / s
+    w = 0.5 * ((a - b) ** 2).mean(axis=(0, 1), dtype=np.float64).sum()
+    g = a.shape[1]
+    ac, bc = a - a.mean(1, keepdims=True), b - b.mean(1, keepdims=True)
+    bt = ((ac * bc).sum(1, dtype=np.float64) / (g - 1)).mean(0).sum()
+    return float(w), float(bt)
+
+
+def _summarise(a, b, s, rng, n_boot):
+    import numpy as np
+
+    g = a.shape[1]
+    w, bt = _wb(a, b, s)
+    boots = np.asarray([[wb_ / bb_, bb_ / (bb_ + wb_)] for wb_, bb_ in
+                        (_wb(a, b, s, rows=rng.integers(0, g, g)) for _ in range(n_boot))])
+    return {"within": w, "between": bt, "ratio": w / bt, "reliability": bt / (bt + w),
+            "ratio_ci": [float(np.quantile(boots[:, 0], .025)), float(np.quantile(boots[:, 0], .975))],
+            "reliability_ci": [float(np.quantile(boots[:, 1], .025)), float(np.quantile(boots[:, 1], .975))]}
+
+
+def reliability_curve(pools, depths_random, depths_systematic, depths_model, reps: int = 10,
+                      n_boot: int = 100, seed: int = 0) -> dict:
+    """Within/between-genome variance ratio and split-half reliability as a function of windows per genome.
+
+    pools: (genomes, pool_windows, dims), windows in genome order (they are evenly spaced along it).
+    Everything is computed after centring across genomes and scaling each dimension by its
+    between-genome SD at full depth, so the shared component does not swamp the ratio.
+
+    Three estimates, all giving within = E||a-b||^2/2 and between = Cov_genomes(a, b) for two
+    disjoint n-window vectors a and b of the same genome:
+      * random      two disjoint RANDOM n-window subsets (conservative: ignores even spacing).
+      * systematic  two interleaved EVENLY SPACED n-window subsets (offset by half a stride), the design
+                    the sweep and embed_all actually use. Needs n | pool and 2n <= pool.
+      * model       within(n) = mean per-window variance / n, valid up to n = pool where no disjoint
+                    halves exist. It matches `random` (windows drawn at random) by construction.
+    `systematic_gain` = within_random / within_systematic: >1 means even spacing beats random draws.
+    Reliability = between / (between + within) is the split-half ICC of an n-window vector.
+    """
+    import numpy as np
+
+    pools = np.asarray(pools, dtype=np.float32)
+    g, pool_n, d = pools.shape
+    rng = np.random.default_rng(seed)
+    mu = pools.mean(1)
+    s = _scale_from(mu)
+    v_bar = float((pools.var(1, ddof=1, dtype=np.float64) / s ** 2).sum(1).mean())
+    dims_eff = float(((mu.astype(np.float64).std(0, ddof=1) / s) ** 2).sum())
+    b_full = dims_eff - v_bar / pool_n  # between-genome variance net of the noise left in the pool mean
+
+    random_, systematic = {}, {}
+    for n in depths_random:
+        if 2 * n > pool_n:
+            continue
+        a = np.empty((reps, g, d), dtype=np.float32)
+        b = np.empty_like(a)
+        for r in range(reps):
+            perm = np.argsort(rng.random((g, pool_n)), axis=1)
+            a[r] = np.take_along_axis(pools, perm[:, :n, None], axis=1).mean(1)
+            b[r] = np.take_along_axis(pools, perm[:, n:2 * n, None], axis=1).mean(1)
+        random_[n] = _summarise(a, b, s, rng, n_boot)
+    for n in depths_systematic:
+        if pool_n % n or 2 * n > pool_n:
+            continue
+        stride = pool_n // n
+        half = max(stride // 2, 1)
+        offsets = sorted({int(o) for o in np.linspace(0, max(stride - half - 1, 0), min(reps, max(stride - half, 1)))})
+        a = np.stack([pools[:, np.arange(n) * stride + o].mean(1) for o in offsets])
+        b = np.stack([pools[:, np.arange(n) * stride + o + half].mean(1) for o in offsets])
+        systematic[n] = {**_summarise(a, b, s, rng, n_boot), "offsets": len(offsets)}
+        if n in random_:
+            systematic[n]["systematic_gain"] = random_[n]["within"] / systematic[n]["within"]
+    model = {n: {"within": v_bar / n, "between": b_full, "ratio": v_bar / n / b_full,
+                 "reliability": b_full / (b_full + v_bar / n), "extrapolated": n not in random_}
+             for n in depths_model}
+    return {"random": random_, "systematic": systematic, "model": model, "per_window_variance": v_bar,
+            "between_full": b_full, "dims_effective": dims_eff, "cosine": cosine_report(mu)}
+
+
+def flattens_at(xs, ys, higher_is_better: bool = True, frac: float = 0.95, noise: float = 0.0) -> dict:
+    """Smallest x reaching `frac` of the total gain from the first point to the best point.
+
+    If the total gain is within 2*noise the curve has no detectable depth effect and none is reported.
+    """
+    sign = 1.0 if higher_is_better else -1.0
+    v = [sign * y for y in ys]
+    gain = max(v) - v[0]
+    if gain <= 2 * noise:
+        return {"flat_within_noise": True, "n": None, "gain": float(sign * gain)}
+    thr = v[0] + frac * gain
+    return {"flat_within_noise": False, "n": next(x for x, val in zip(xs, v) if val >= thr), "gain": float(sign * gain)}
+
+
+def gc_quality(X, gc, groups, n_splits: int = 5, alpha: float = 1000.0) -> dict:
+    """Out-of-phylum prediction of genome GC from an embedding: Spearman r and R^2 of cross-validated predictions."""
+    import numpy as np
+    from scipy.stats import spearmanr
+    from sklearn.linear_model import Ridge
+    from sklearn.model_selection import GroupKFold, cross_val_predict
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    X, gc = np.asarray(X), np.asarray(gc, dtype=float)
+    pred = cross_val_predict(make_pipeline(StandardScaler(), Ridge(alpha=alpha)), X, gc, groups=np.asarray(groups),
+                             cv=GroupKFold(n_splits=n_splits))
+    return {"spearman": float(spearmanr(pred, gc).statistic),
+            "r2": float(1 - ((gc - pred) ** 2).sum() / ((gc - gc.mean()) ** 2).sum())}
+
+
 def select_depth(results: list[dict]) -> dict:
     """One-standard-error rule: the smallest depth whose mean AUC is within one SE of the best depth's."""
     scored = [r for r in results if not math.isnan(r["auc_mean"])]
