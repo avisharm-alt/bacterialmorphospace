@@ -1,0 +1,27 @@
+{
+ "sweep_range": [
+  1,
+  250000
+ ],
+ "batches_expected": 2500,
+ "batches_cached": 2500,
+ "batches_missing": 0,
+ "sweep_complete": true,
+ "strains_cached": 102187,
+ "max_bacdive_id_found": 179194,
+ "cap_looks_too_low": false,
+ "empty_id_ranges_ge_1000": [
+  [
+   24901,
+   99900
+  ],
+  [
+   128801,
+   130100
+  ],
+  [
+   179201,
+   250000
+  ]
+ ]
+}

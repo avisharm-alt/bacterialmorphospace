@@ -1,0 +1,6 @@
+view	description	N	cells	occupied	occupied (null mean)	testable cells	empty & testable	empty beyond chance (q<α)	occupied but depleted (q<α)
+primary	one strain per GTDB species · coarse bins · all temperature sources	2580	216	90	117.2876	69	4	4	24
+strain-level	no dereplication (sensitivity)	2630	216	90	118.0664	71	6	4	24
+optimum-only	temperature bin from a reported optimum only	2168	216	87	109.0709	60	4	3	18
+fine bins	fine binning (shape 5, oxygen 4, temperature 4)	2512	640	112	145.2487	66	5	3	22
+genus-level	one strain per GTDB genus (extra sensitivity for congener clustering)	1235	216	86	104.2102	59	6	3	13

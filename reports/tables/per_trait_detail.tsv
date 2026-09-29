@@ -1,0 +1,9 @@
+trait	any raw observation	usable (normalised)	lost to conflict	no binnable value (unmapped, unparsed, or only negative/qualitative entries)	usable with genome
+gram stain	15606	15514	26	66	9514
+cell shape	15181	14802	379	0	8887
+motility	14058	13809	249	0	8736
+spore formation	5443	5424	19	0	4254
+oxygen tolerance	23254	21855	1390	9	9510
+temperature	50393	50310	75	8	18117
+pH	6794	6740	5	49	5298
+halophily (curated level)	364	361	3	0	247

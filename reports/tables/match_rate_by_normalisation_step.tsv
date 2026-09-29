@@ -1,0 +1,7 @@
+step	all strains n	all strains %	morph. panel n	morph. panel %	core panel n	core panel %
+A. designation, raw whole strings (before normalisation)	8008	7.836613267832504	695	17.17321472695824	613	17.955477445811365
+B. designation, + split into tokens, raw	19443	19.0268820887197	2878	71.11440573264146	2429	71.14821323960165
+C. designation, + normalised keys (after normalisation)	21361	20.90383316860266	3017	74.54904867803312	2530	74.10661980082016
+D. accession route alone	18765	18.36339260375586	3002	74.17840375586854	2543	74.48740480374927
+E. final: accession or normalised designation	22835	22.34628670965974	3126	77.24240177909563	2630	77.03573520796719
+(info) raw tokens without the taxon check — includes cross-genus collisions, not a match count	27177	26.595359487997495	3159	78.05782060785768	2673	78.29525483304042

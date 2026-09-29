@@ -1,0 +1,67 @@
+{
+ "generated_at": "2026-09-29T04:48:25+00:00",
+ "git_commit": "f4fa8baabee2363dd9b910bb503bc765114109fd",
+ "config_sha256": "df8029adf221038947220c66467dec63c859d30f8d82f69ebab0fab298e45f10",
+ "bacdive": {
+  "api": "https://api.bacdive.dsmz.de/v2",
+  "api_version": "v2",
+  "release_stamp_from_record_dois": "20260601",
+  "doi_date_counts": {
+   "20260601": 89765,
+   "20251217": 12422
+  },
+  "fetched_from": "2026-09-29T04:19:59+00:00",
+  "fetched_to": "2026-09-29T04:26:56+00:00",
+  "predictions_requested": false,
+  "sweep_range": [
+   1,
+   250000
+  ],
+  "batches_expected": 2500,
+  "batches_cached": 2500,
+  "batches_missing": 0,
+  "sweep_complete": true,
+  "strains_cached": 102187,
+  "max_bacdive_id_found": 179194,
+  "cap_looks_too_low": false,
+  "empty_id_ranges_ge_1000": [
+   [
+    24901,
+    99900
+   ],
+   [
+    128801,
+    130100
+   ],
+   [
+    179201,
+    250000
+   ]
+  ]
+ },
+ "gtdb": {
+  "release": "v232",
+  "released": "Released Apr 15, 2026",
+  "source_url": "https://data.gtdb.ecogenomic.org/releases/latest/bac120_metadata.tsv.gz",
+  "metadata_sha256": "1650d3164666e5839c20ee15d82511909a5bbd5269035a7b564b9048dd777893",
+  "metadata_last_modified": "Tue, 14 Apr 2026 09:04:34 GMT",
+  "n_genomes": 878998,
+  "n_genomes_with_strain_ids": 878899,
+  "n_designation_keys": 771360,
+  "joined_at": "2026-09-29T04:45:17+00:00"
+ },
+ "counts": {
+  "strains": 102187,
+  "matched": 22835,
+  "core6_complete": 3414,
+  "core6_complete_with_genome": 2630,
+  "core6_species": 2580
+ },
+ "analysis": {
+  "seed": 20260929,
+  "n_perm_full": 10000,
+  "n_perm_subset": 2000,
+  "min_expected_for_test": 3.0,
+  "fdr_alpha": 0.05
+ }
+}

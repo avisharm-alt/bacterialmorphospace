@@ -1,0 +1,11 @@
+{
+ "release": "v232",
+ "released": "Released Apr 15, 2026",
+ "source_url": "https://data.gtdb.ecogenomic.org/releases/latest/bac120_metadata.tsv.gz",
+ "metadata_sha256": "1650d3164666e5839c20ee15d82511909a5bbd5269035a7b564b9048dd777893",
+ "metadata_last_modified": "Tue, 14 Apr 2026 09:04:34 GMT",
+ "n_genomes": 878998,
+ "n_genomes_with_strain_ids": 878899,
+ "n_designation_keys": 771360,
+ "joined_at": "2026-09-29T04:45:17+00:00"
+}
