@@ -48,7 +48,9 @@ def join(cfg: Config) -> pd.DataFrame:
     gtdb_info = {"release": info.release, "released": info.released, "source_url": info.source_url,
                  "metadata_sha256": info.metadata_sha256, "metadata_last_modified": info.metadata_last_modified,
                  "n_genomes": int(len(gtdb)), "n_genomes_with_strain_ids": int(gtdb["ncbi_strain_identifiers"].notna().sum()),
-                 "n_designation_keys": len(idx.by_key), "joined_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+                 "n_designation_keys": len(idx.by_key), "n_phyla": int(gtdb["gtdb_phylum"].nunique()),
+                 "n_species": int(gtdb["gtdb_species"].nunique()),
+                 "joined_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     (inter / "gtdb_info.json").write_text(json.dumps(gtdb_info, indent=1))
     log.info("joined: %d of %d strains matched to a GTDB genome", int(df["genome_matched"].sum()), len(df))
     return df

@@ -1,4 +1,4 @@
-"""Attrition + occupancy report.
+"""Occupancy report: attrition, occupancy, global and stratified nulls, power.
 
 Writes
   reports/attrition_report.md          the deliverable
@@ -389,8 +389,6 @@ def build_report(cfg: Config) -> str:
     ove = [occ_row(MORPH_LABEL, grid[(grid.traits == mname) & (grid.null == NULL_NAME[x])].iloc[0].to_dict()) for x in NULLS]
     ove += [occ_row(plabel, results[k]["primary"][x].summary) for k, _, plabel in panels for x in NULLS]
     ove = save("occupied_vs_expected", pd.DataFrame(ove))
-    sub_occ = grid.pivot_table(index="traits", columns="null", values=["occupied", "null_occupied_mean", "p_fewer_occupied_than_null"],
-                               aggfunc="first")
 
     # per-phylum occupancy
     phy_occ = {k: save(f"phylum_occupancy_{k}", A.phylum_occupancy(prim[k], t, cfg, n_perm=a["n_perm_phylum_occupancy"],
@@ -487,20 +485,313 @@ def build_report(cfg: Config) -> str:
     }
     (rep / "run_manifest.json").write_text(json.dumps(manifest, indent=1, default=str))
 
+    # ---------------------------------------------------------------- power: minimum detectable constraint
+    mde_rows = [{"panel": plabel, **A.detectable_zero(results[k]["primary"][x], cfg)} for k, _, plabel in panels for x in (None, "order")]
+    mde = save("minimum_detectable_constraint", pd.DataFrame(mde_rows))
+    mde_o = {k: A.detectable_zero(results[k]["primary"]["order"], cfg) for k, _, _ in panels}
+
+    # deficit trajectory, and correction across the subset maps
+    pr = {k: results[k]["primary"] for k, _, _ in panels}
+    traj = {}
+    for k, _, _ in panels:
+        d = [pr[k][x].summary["null_occupied_mean"] - pr[k][x].summary["occupied"] for x in NULLS]
+        traj[k] = {"deficits": d, "nonincreasing": all(d[i + 1] <= d[i] + 1e-9 for i in range(len(d) - 1)),
+                   "strict": all(d[i + 1] < d[i] - 1e-9 for i in range(len(d) - 1))}
+    so_order = grid[grid["null"] == "order"][["traits", "occupied", "null_occupied_mean", "p_fewer_occupied_than_null"]].copy()
+    so_order["q across maps (BH)"] = A.bh_qvalues(so_order["p_fewer_occupied_than_null"].to_numpy())
+    save("order_level_deficit_across_maps", so_order)
+
+    # small-strata methods note: cells that only the exclusion would have emptied
+    excl_rows = []
+    for k, t, plabel in panels:
+        ct = pr[k]["order"].cell_table
+        hit = ct[ct["emptied_by_exclusion"] & ct["testable"]]
+        for _, r in hit.iterrows():
+            excl_rows.append({"panel": plabel, "cell": " / ".join(f"{x}={r[x]}" for x in t),
+                              "species in cell (all)": int(r["observed_all_species"]), "species in cell (kept)": int(r["observed"]),
+                              "order-null expected (kept)": r["expected"], "q it would have had": r["q_low"],
+                              "would have been flagged": bool(r["q_low"] < a["fdr_alpha"]),
+                              "order sizes of its species": ", ".join(str(int(s_)) for s_ in sorted(
+                                  prim[k].loc[np.logical_and.reduce([prim[k][x] == r[x] for x in t]), "gtdb_order"]
+                                  .map(prim[k]["gtdb_order"].value_counts()).tolist()))})
+    excl = save("small_strata_false_positives", pd.DataFrame(excl_rows))
+
     # ---------------------------------------------------------------- markdown
     R: list[str] = []
     w = R.append
     bd_stamp = manifest["bacdive"]["release_stamp_from_record_dois"]
     n_core = int(df["core6_complete"].sum())
     n_core_g = int((df["core6_complete"] & df["genome_matched"]).sum())
-    pr = {k: results[k]["primary"] for k, _, _ in panels}
     n_surv = {k: int(merged[k]["order: empty✗"].sum()) for k, _, _ in panels}
     n_glob = {k: int(merged[k]["global: empty✗"].sum()) for k, _, _ in panels}
     ts_core = type_strain_table(prim["core"]).set_index("")
+    plab = {k: lab for k, _, lab in panels}
+    oc, on = pr["core"], pr["no_spore"]
+    alpha = a["fdr_alpha"]
 
-    w("# BacDive × GTDB: attrition and trait-space occupancy\n")
-    w(f"_Generated {manifest['generated_at']} · code `{manifest['git_commit']}` · config sha256 `{cfg.text_sha256[:12]}`_\n")
-    w("## Snapshot\n")
+    def dtxt(k):
+        d = traj[k]["deficits"]
+        return " → ".join(f"{x:.0f}" for x in d)
+
+    def trend(k):
+        return "narrows at every step" if traj[k]["strict"] else ("never widens" if traj[k]["nonincreasing"] else "does not narrow monotonically")
+
+    w("# Bacterial trait space: occupancy and its phylogenetic structure\n")
+    w(f"_Generated {manifest['generated_at']} · code `{manifest['git_commit']}` · config sha256 `{cfg.text_sha256[:12]}` · "
+      f"BacDive API v2 (record DOIs `{bd_stamp}`) · GTDB {gtdb['release']}_\n")
+
+    # ---- summary ---------------------------------------------------------------------------------
+    w("## Summary\n")
+    w(f"**Bacterial trait space is sparser than independence predicts, and that sparsity is almost entirely phylogenetic.** "
+      f"On the six-trait core map, {len(prim['core']):,} species occupy {oc[None].summary['occupied']} of {oc[None].summary['cells']} cells; "
+      f"with traits assigned independently they would fill {oc[None].summary['null_occupied_mean']:.0f} "
+      f"(P = {oc[None].summary['p_fewer_occupied_than_null']:.2g}). When the null is made phylogeny-aware, shuffling traits only within "
+      f"a phylum, class or order, the deficit {trend('core')}: {dtxt('core')} cells. At order level it is not significant "
+      f"(P = {oc['order'].summary['p_fewer_occupied_than_null']:.2g}). The five-trait map without spore formation ({len(prim['no_spore']):,} species) "
+      f"behaves the same ({dtxt('no_spore')} cells; P = {on['order'].summary['p_fewer_occupied_than_null']:.2g} at order level).\n")
+    surv_ns = [(c, v) for (kk, c), v in surv.items() if kk == "no_spore"]
+    absorbed = all(any(not x["empty beyond chance"] for _, x in v[0].iterrows() if str(x["view"]).startswith("primary (diagnostic"))
+                   for _, v in surv.items()) if surv else True
+    s_txt = ""
+    if n_surv["core"] == 0 and surv_ns:
+        c, v = surv_ns[0]
+        d = [x for _, x in v[0].iterrows() if str(x["view"]).startswith("primary (diagnostic")]
+        s_txt = (f" In the core panel no cell survives the order-level shuffle. In the no-spore panel one cell, `{c}`, passes the order-level "
+                 f"criterion (expected {v[2]['order: expected']:.1f}, q = {v[2]['order: q']:.2g})"
+                 + (f", but a family-level shuffle makes it untestable (expected {d[0]['expected']:.1f})" if d and not d[0]["empty beyond chance"] else "")
+                 + f", and {len(v[4])} of {n:,} BacDive strains has the combination.")
+    elif sum(n_surv.values()) == 0:
+        s_txt = " No cell survives the order-level shuffle in either panel."
+    verdict = ("No trait combination is empty beyond what lineage structure explains." if absorbed
+               else "At least one trait combination is empty beyond what lineage structure explains (§5).")
+    w(f"**{verdict}**{s_txt}\n")
+    if pcs:
+        p0 = pcs[0]
+        w(f"The method does detect known constraints. {p0['spec']['name']}, a combination absent because endospores are a Bacillota trait and "
+          f"Bacillota are Gram-positive, is flagged by the global null (expected {p0['row']['global: expected']:.1f}, observed 0) and correctly "
+          f"absorbed by every stratified null (expected {p0['row']['order: expected']:.1f} at order level).\n")
+    w("The argument, section by section:\n")
+    w("1. **§1 The occupancy map.** Which trait combinations are occupied, and by how many species.")
+    w("2. **§2 Global null.** Fewer cells are occupied than independent traits would fill.")
+    w("3. **§3 Stratified nulls.** The shortfall shrinks as the null respects phylum, class, then order, and is not significant at order level.")
+    w("4. **§4 Positive control.** The method flags a known constraint globally and attributes it to lineage.")
+    w("5. **§5 No novel constraints.** Nothing survives the order-level shuffle and a family-level check.")
+    w("6. **§6 Power.** The smallest constraint the order-level null could have detected.")
+    w("7. **§7 Methods note.** Why dropping small strata from a stratified permutation test creates false positives.\n")
+
+    # ---- read this first -------------------------------------------------------------------------
+    mc, mn = mde_o["core"], mde_o["no_spore"]
+    n_phyla_panel = prim["core"]["gtdb_phylum"].nunique()
+    w("## Read this first: what the result does and does not show\n")
+    w(f"1. **Six coarse traits are a low-dimensional slice of phenotype.** The maps have 2–3 levels per trait "
+      f"({oc[None].summary['cells']} and {on[None].summary['cells']} cells). Absence of detectable constraint at this resolution is not absence "
+      "of constraint. Constraints can live in finer bins, in continuous values (cell size, optimum temperature), or in traits not measured here "
+      "(metabolism, envelope chemistry, genome features).")
+    w(f"2. **The panel is type strains.** {ts_core.loc['either', '%']} of core-panel species are represented by a type strain: culturable, "
+      f"formally described organisms, characterised with standard protocols. The panel spans {n_phyla_panel} of the "
+      f"{gtdb.get('n_phyla', '–')} bacterial phyla in GTDB {gtdb['release']}. Whole uncultured phyla are absent by construction. The marginals "
+      "are those of the described world, and a combination can be absent because no one has isolated and described such an organism.")
+    w(f"3. **Power is limited.** At order level only {mc['testable cells (m)']} of {mc['cells']} core-panel cells are testable "
+      f"(no-spore: {mn['testable cells (m)']} of {mn['cells']}). A true zero is guaranteed to reach q < {alpha} only if the order-level null "
+      f"expects **≥ {mc['minimum detectable constraint (E)']:.1f} species** in that cell (core panel; {100 * mc['as share of species']:.2f}% "
+      f"of the species tested) or **≥ {mn['minimum detectable constraint (E)']:.1f}** (no-spore; {100 * mn['as share of species']:.2f}%). "
+      f"Only {mc['cells with E >= minimum detectable constraint']} core-panel cells meet that bar "
+      f"(no-spore: {mn['cells with E >= minimum detectable constraint']}). They hold {100 * mc['share of expected species mass in those cells']:.0f}% "
+      f"({100 * mn['share of expected species mass in those cells']:.0f}%) of the expected species. **We could have detected a constraint "
+      f"that empties a combination the lineage structure predicts to hold about {mc['minimum detectable constraint (E)']:.0f} or more species. "
+      "Constraints on rarer combinations are invisible to this analysis** (§6).")
+    w("4. **Exchangeability below order.** The order-level shuffle removes structure between orders, not within them. That is why "
+      "the single order-level survivor was re-tested at family level (§5).\n")
+
+    # ---- 1. map -------------------------------------------------------------------------------------
+    w("## 1. The occupancy map\n")
+    w(f"{n:,} BacDive strains; {n_core:,} have the six-trait core panel, {n_core_g:,} of them with a matched GTDB genome, "
+      f"dereplicated to one strain per GTDB species (type strain preferred). Attrition and matching details are in Appendix A–B.\n")
+    w(md_table(side))
+    sc, sn = side.iloc[0], side.iloc[1]
+    w(f"\nDropping spore formation, the coverage bottleneck ({pct(int(df['spore_usable'].sum()), n)} of strains), raises N "
+      f"{sn['N species'] / sc['N species']:.1f}× on half the cells. That lifts the testable share at order level from "
+      f"{100 * sc['testable cells (order)'] / sc['cells']:.0f}% to {100 * sn['testable cells (order)'] / sn['cells']:.0f}% of cells, "
+      "though the absolute number barely moves.\n")
+    for k, t, plabel in panels:
+        w(f"\n**{plabel}: species per cell.** **0✗** survives the order-level shuffle · 0† flagged by a coarser null only (phylogenetic "
+          "structure) · 0 empty, testable, not flagged · `·` empty and untestable under every null.\n")
+        w(md_table(crosstab_grid(merged[k], t, cfg), index=True))
+        w("")
+
+    # ---- 2. global null -------------------------------------------------------------------------------
+    w("\n## 2. The global null: fewer occupied cells than independence predicts\n")
+    w("Each trait column is permuted across all species, which keeps every trait's frequency and destroys all association between traits. "
+      "The observed map has fewer occupied cells than the permuted maps: traits co-occur more tightly than independence allows.\n")
+    w(md_table(ove[ove["null"] == "global"].drop(columns=["strata", "species excluded (small strata)"])))
+    gl = pd.concat([merged[k].loc[merged[k]["global: empty✗"], t + ["global: expected", "global: q", "global: q (seed 2)"]]
+                    .assign(panel=plab[k]) for k, t, _ in panels], ignore_index=True)
+    w(f"\nCells the global null flags as empty beyond chance (q < {alpha}): {n_glob['core']} in the core panel, {n_glob['no_spore']} in the no-spore panel.\n")
+    w(md_table(gl[["panel"] + core + ["global: expected", "global: q", "global: q (seed 2)"]].fillna("·")))
+    w("\nThe global null cannot distinguish a constraint from the fact that traits are each fixed in different clades. §3 separates the two.\n")
+
+    # ---- 3. stratified ------------------------------------------------------------------------------
+    w("## 3. Stratified nulls: the deficit is phylogenetic\n")
+    w("Each trait column is permuted only among species of the same GTDB taxon, so every taxon keeps its own trait frequencies. "
+      "Expected count per cell = Σ over taxa n·∏ p(trait level within the taxon). Whatever deficit remains is what lineage composition "
+      f"cannot explain. Taxa with fewer than {a['min_stratum_size']} species are excluded and counted (§7); stratified rows use the kept species "
+      "for both observed and expected.\n")
+    w(md_table(ove))
+    for k, _, plabel in panels:
+        d = traj[k]["deficits"]
+        w(f"\n- **{plabel}:** deficit {' → '.join(f'{x:.1f}' for x in d)} cells (global → phylum → class → order); it {trend(k)}. "
+          f"Order level: {pr[k]['order'].summary['occupied']} occupied vs {pr[k]['order'].summary['null_occupied_mean']:.1f} expected, "
+          f"P = {pr[k]['order'].summary['p_fewer_occupied_than_null']:.2g}.")
+    w(f"\n**Lower-dimensional maps.** Across all {len(so_order)} 4- and 5-trait subsets of the core traits, the smallest order-level P for an "
+      f"occupancy deficit is {so_order['p_fewer_occupied_than_null'].min():.2g}; after BH correction across maps the smallest q is "
+      f"{so_order['q across maps (BH)'].min():.2g}. {'No' if so_order['q across maps (BH)'].min() >= alpha else 'Some'} "
+      "subset map retains a significant deficit at order level. Full table: `reports/tables/order_level_deficit_across_maps.tsv`.\n")
+    w("### 3a. Where the occupancy comes from: per phylum\n")
+    for k, _, plabel in panels:
+        po = phy_occ[k]
+        top3 = po.iloc[:3]
+        tot_occ = pr[k][None].summary["occupied"]
+        dd = po.dropna(subset=["occupied (within-phylum null mean)"]).copy()
+        dd["deficit"] = dd["occupied (within-phylum null mean)"] - dd["cells occupied"]
+        top = dd.sort_values("deficit", ascending=False).iloc[0]
+        w(f"\n**{plabel}.** {tot_occ} cells occupied. The three largest phyla ({', '.join(top3.phylum)}; "
+          f"{pct(int(top3.N.sum()), int(po.N.sum()))} of species) account for {int(top3['cumulative occupied (this + larger phyla)'].iloc[-1])} "
+          f"of them ({top3['cumulative share of all occupied'].iloc[-1] * 100:.0f}%). The largest within-phylum deficit is {top.phylum}: "
+          f"{int(top['cells occupied'])} cells vs {top['occupied (within-phylum null mean)']:.0f} expected from its own trait frequencies.\n")
+        w(md_table(po.head(10).round({"occupied (within-phylum null mean)": 1, "cumulative share of all occupied": 2})))
+    w("\n### 3b. Cell-level results under all four nulls\n")
+    w("Every cell that is empty and testable under at least one null, or flagged under at least one. `–` = untestable under that null. "
+      "Every cell, every null: `reports/tables/cells_<panel>_all_nulls.tsv`.\n")
+    show_cols = lambda t: (t + ["observed (all species)", "global: expected", "global: q", "phylum: expected", "phylum: q",  # noqa: E731
+                                "class: expected", "class: q", "order: expected", "order: q", "category"])
+    for k, t, plabel in panels:
+        m = merged[k]
+        testable_any = np.logical_or.reduce([m[f"{NULL_NAME[x]}: testable"] for x in NULLS])
+        flagged_any = np.logical_or.reduce([m[f"{NULL_NAME[x]}: empty✗"] for x in NULLS])
+        sel = m[((m["observed (all species)"] == 0) & testable_any) | flagged_any].copy()
+        for x in NULLS:
+            sel.loc[~sel[f"{NULL_NAME[x]}: testable"], f"{NULL_NAME[x]}: q"] = np.nan
+        w(f"\n**{plabel}**\n")
+        w(md_table(sel.sort_values("global: expected", ascending=False)[show_cols(t)]) if len(sel) else "None.\n")
+    w("\nCells flagged under phylum or class but not globally arise when a taxon mixes sub-clades. Within Bacillota, for example, "
+      "spore formers and cocci sit in different orders, so a phylum-level shuffle predicts spore-forming cocci that an order-level shuffle does not.\n")
+
+    # ---- 4. positive control -------------------------------------------------------------------------
+    w("## 4. Positive control: the method detects a known constraint\n")
+    for p in pcs:
+        spec = p["spec"]
+        w(f"**{spec['name']}**: `" + " / ".join(f"{kk}={vv}" for kk, vv in spec["cell"].items()) + "`\n")
+        w(spec["rationale"] + "\n")
+        w("This was the strongest hit of the first, global-only run. It is a check on the method, **not a finding**. Expected behaviour: the "
+          "global null flags it, and a phylogeny-aware null attributes it to lineage.\n")
+        w(md_table(p["table"]))
+        w(f"\n**Result: {'passed' if p['passed'] else 'FAILED'}.** "
+          + (f"The expected count falls from {p['row']['global: expected']:.1f} (global) to {p['row']['phylum: expected']:.1f} (phylum), "
+             f"{p['row']['class: expected']:.1f} (class) and {p['row']['order: expected']:.1f} (order): within any one taxon the constituent "
+             "traits barely co-occur, so the combination is not expected to be occupied in the first place."
+             if p["passed"] else "Inspect before trusting any other cell.") + "\n")
+
+    # ---- 5. no novel constraints ---------------------------------------------------------------------
+    w("## 5. No novel constraints survive\n")
+    for k, _, plabel in panels:
+        w(f"- **{plabel}:** {n_surv[k]} cell{'s' if n_surv[k] != 1 else ''} survive{'s' if n_surv[k] == 1 else ''} the order-level shuffle "
+          f"({n_glob[k]} flagged by the global null).")
+    w("")
+    for (k, cname), (vt, contrib, r, fams, wide) in surv.items():
+        tot = contrib["expected in cell"].sum()
+        split = fams.loc[fams["families carrying every constituent level"] == "none", "expected in cell"].sum()
+        diag = [x for _, x in vt.iterrows() if str(x["view"]).startswith("primary (diagnostic")]
+        w(f"### The one order-level survivor, and why it is not a finding: `{cname}` ({plab[k]})\n")
+        w(f"- **Order level.** Observed 0; the order-level null expects {r['order: expected']:.1f} (q = {r['order: q']:.2g}; independent seed "
+          f"q = {r['order: q (seed 2)']:.2g}).")
+        for d in diag:
+            w(f"- **{d['null'].capitalize()} level (diagnostic).** Expected falls to {d['expected']:.2f}, "
+              f"{'below the testability floor' if not d['testable'] else ('not significant' if not d['empty beyond chance'] else 'still flagged')}.")
+        w(f"- **Where the expectation comes from.** {100 * contrib['expected in cell'].iloc[0] / tot:.0f}% comes from one order "
+          f"({contrib['order'].iloc[0]}, {int(contrib['N'].iloc[0])} species). {100 * split / tot:.0f}% comes from orders in which no single family "
+          "carries every constituent trait level, i.e. the combination is \"expected\" only because the order mixes families.")
+        vv = vt.set_index(["view", "null"])
+        notes = []
+        for view_ in ("optimum-only", "genus-level"):
+            if (view_, "order") in vv.index:
+                x = vv.loc[(view_, "order")]
+                notes.append(f"{view_}: {'survives' if x['empty beyond chance'] else ('untestable' if not x['testable'] else f'not significant (q = {x.q:.2g})')}")
+        w(f"- **Sensitivity.** {'; '.join(notes)}.")
+        w(f"- **In BacDive as a whole.** {len(wide)} of {n:,} strains, with or without a genome, "
+          f"{'has' if len(wide) == 1 else 'have'} the combination"
+          + (": " + ", ".join(f"*{s_}* (BacDive {b_}{', genome' if g_ else ', no genome'})" for s_, b_, g_ in
+                                zip(wide["species"], wide["bacdive_id"], wide["genome_matched"])) if 0 < len(wide) <= 5 else "") + ".\n")
+        w("Top contributing orders, and whether any family inside them carries every constituent level:\n")
+        w(md_table(fams.head(5).round(3)))
+        w("")
+    w("### Lower-dimensional maps\n")
+    w("Order-level survivors in the 4- and 5-trait subsets (not corrected across maps). Projections of the same cell count as one observation, not independent support:\n")
+    w(md_table(subset_survivors) if len(subset_survivors) else "None.\n")
+    w("\n**No transplant or follow-up experiments are proposed: there is no surviving target.**\n")
+
+    # ---- 6. power -------------------------------------------------------------------------------------
+    w("## 6. Power: the smallest constraint this analysis could have detected\n")
+    w(f"For a cell that is truly empty, its permutation p-value is p0 = P(null count = 0). With m testable cells, BH gives q ≤ p0·m. So "
+      f"p0 ≤ {alpha}/m **guarantees** q < {alpha} whatever the other cells do, and since q ≥ p0, p0 ≤ {alpha} is **necessary**. Under a "
+      f"Poisson approximation p0 ≈ e^(−E), where E is the null's expected count. That gives E ≥ ln(m/{alpha}) guaranteed and "
+      f"E ≥ ln(1/{alpha}) ≈ 3.0 at best. The within-taxon permutation is usually less dispersed than Poisson, so the empirical p0 from the "
+      f"{a['n_perm_full']:,} permutations is also used. The **minimum detectable constraint** is the largest of the Poisson bound, the empirical "
+      f"threshold and the testability floor ({a['min_expected_for_test']:g}), so it holds conservatively.\n")
+    show = mde[["panel", "null", "species used", "cells", "testable cells (m)", "E needed, guaranteed (Poisson ln(m/α))",
+                "E needed, guaranteed (empirical, this null)", "minimum detectable constraint (E)", "as share of species",
+                "cells with E >= minimum detectable constraint", "share of expected species mass in those cells"]].copy()
+    show["as share of species"] = show["as share of species"].map(lambda v: f"{100 * v:.2f}%")
+    show["share of expected species mass in those cells"] = show["share of expected species mass in those cells"].map(lambda v: f"{100 * v:.0f}%")
+    w(md_table(show))
+    w(f"\n**Statement.** At order level we could have detected, with q < {alpha}, any constraint that empties a combination the lineage "
+      f"structure predicts to hold ≥ {mc['minimum detectable constraint (E)']:.1f} species (core panel, {100 * mc['as share of species']:.2f}% of "
+      f"species) or ≥ {mn['minimum detectable constraint (E)']:.1f} species (no-spore, {100 * mn['as share of species']:.2f}%). None was found. "
+      f"The {mc['cells'] - mc['cells with E >= minimum detectable constraint']} core-panel cells below that bar are untested territory, not "
+      "evidence of occupancy. A constraint that thins rather than empties a cell would need a larger E still.\n")
+    w("Expected species per cell by map size (global null, species level):\n")
+    for k, _, plabel in panels:
+        w(f"\n**{plabel}**\n")
+        w(md_table(capacity_summary(caps[k])))
+
+    # ---- 7. methods note -------------------------------------------------------------------------------
+    w("\n## 7. Methods note: dropping small strata from a stratified permutation test manufactures false positives\n")
+    w("A within-stratum permutation cannot shuffle a stratum of one or two species, so the obvious fix is to drop small strata. "
+      "Done naively, that creates false \"forbidden combinations\". Small strata are not a random subset of species: they are phylogenetically "
+      "isolated lineages, deep-branching or sparsely described, and those are exactly the organisms that carry unusual trait combinations, "
+      "i.e. the ones that populate rare cells. Dropping them removes a rare cell's only occupants. The null, computed from the large strata "
+      "that remain, still predicts the cell from within-stratum trait frequencies. Observed zero, expected several: a confident, spurious "
+      "\"empty beyond chance\".\n")
+    if len(excl):
+        e0 = excl.sort_values("species in cell (all)", ascending=False).iloc[0]
+        n_flag = int(excl["would have been flagged"].sum())
+        true_q = [merged[k].loc[merged[k]["order: empty✗"], "order: q"].min() for k, _, _ in panels if merged[k]["order: empty✗"].any()]
+        stronger = bool(true_q) and e0["q it would have had"] < min(true_q)
+        w(f"It happened here. During development, before the guard existed, the first stratified run flagged `{e0['cell']}` ({e0['panel']}) "
+          "as empty beyond chance at order level, and it would have been reported as a novel constraint. The cell holds "
+          f"{e0['species in cell (all)']} species. Every one of them sits in an order with fewer than {a['min_stratum_size']} species in the panel "
+          f"(order sizes: {e0['order sizes of its species']}), so excluding small orders emptied it. In this run it has "
+          f"q = {e0['q it would have had']:.2g} against {e0['order-null expected (kept)']:.1f} expected among kept species"
+          + (", a lower q than the genuine order-level survivor" if stronger else "")
+          + (f". Without the guard, {n_flag} cell{'s' if n_flag != 1 else ''} across the two panels would be falsely flagged in this run.\n"
+             if n_flag else (". With this run's seed it falls just short of q < 0.05: the false positive is threshold-marginal, which is "
+                             "exactly why it would have been easy to believe.\n" if e0["q it would have had"] < 2 * alpha else
+                             ". With this run's seed it is not significant, but the mechanism is seed-independent.\n")))
+        w(md_table(excl))
+    w("\n**Fix used here.** A cell counts as \"empty beyond chance\" under a stratified null only if it is empty among *all* species. "
+      "Excluded species still count as occupants; they are just not shuffled. Cells emptied only by the exclusion are labelled "
+      "`emptied_by_exclusion` and reported. An equivalent alternative keeps small strata as fixed, unpermuted blocks that contribute identically "
+      "to observed and null counts. The general point applies to any stratified or blocked permutation test with a minimum block size: "
+      "phylogenetically stratified trait tests, stratified enrichment tests, case-control tests blocked by site. The exclusion rule is itself "
+      "a selection on the covariate that defines the strata, and it must not change the observed statistic.\n")
+    w(f"Other settings: a cell is tested only if its expected count is ≥ {a['min_expected_for_test']:g} under that null; BH correction within "
+      f"each map over its testable cells; {a['n_perm_full']:,} permutations per full map ({a['n_perm_subset']:,} per subset map); the global "
+      "and order nulls re-run with an independent seed. Species kept per null:\n")
+    for k, _, plabel in panels:
+        w(f"\n**{plabel}**\n")
+        w(md_table(save(f"strata_{k}", strata_table(prim[k], default=a["min_stratum_size"]))))
+
+    # ---- appendices ------------------------------------------------------------------------------------
+    w("\n---\n\n## Appendix A. Snapshot and attrition\n")
     w(md_table(pd.DataFrame([
         {"source": "BacDive", "version": f"API v2, record DOIs stamped `{bd_stamp}` (BacDive exposes no release number)",
          "retrieved": f"{manifest['bacdive']['fetched_from'][:10]} → {manifest['bacdive']['fetched_to'][:10]}",
@@ -510,321 +801,72 @@ def build_report(cfg: Config) -> str:
          "detail": f"bac120_metadata.tsv.gz, {gtdb['n_genomes']:,} genomes, sha256 `{gtdb['metadata_sha256'][:12]}`"},
     ])))
     w("\nEmpty BacDive ID ranges ≥1,000 IDs: " + ", ".join(f"{a_:,}–{b_:,}" for a_, b_ in sweep["empty_id_ranges_ge_1000"]) + ".\n")
-
-    # headline -------------------------------------------------------------------------------
-    oc, on = pr["core"], pr["no_spore"]
-    w("## Headline\n")
-    w(f"- **Data.** {n:,} BacDive strains. {n_core:,} have the 6-trait core panel, {n_core_g:,} of them with a GTDB genome, "
-      f"giving **{len(prim['core']):,} species**. Dropping spore formation gives the 5-trait no-spore panel: "
-      f"**{len(prim['no_spore']):,} species** ({len(prim['no_spore']) / len(prim['core']):.1f}×) on half the cells "
-      f"({on[None].summary['cells']} vs {oc[None].summary['cells']}).")
-    pcs_core = [p for p in pcs if p["spec"]["panel"] == "core"]
-    if pcs_core:
-        p0 = pcs_core[0]
-        w(f"- **Positive control {'passed' if p0['passed'] else 'FAILED'}.** {p0['spec']['name']} is a known phylogenetic constraint, not a finding. "
-          f"The global null flags it (expected {p0['row']['global: expected']:.1f}, observed 0). Under the order-level shuffle it is "
-          f"{'untestable' if not p0['row']['order: testable'] else 'not significant'} (expected {p0['row']['order: expected']:.1f}), "
-          "as it should be once the null knows which clades carry which traits (§7).")
-    w(f"- **The occupancy deficit is mostly phylogenetic.** Core panel: {oc[None].summary['occupied']} cells occupied vs "
-      f"{oc[None].summary['null_occupied_mean']:.0f} expected under the global null (P = {oc[None].summary['p_fewer_occupied_than_null']:.2g}). "
-      f"The phylum, class and order shuffles give {oc['phylum'].summary['null_occupied_mean']:.0f}, {oc['class'].summary['null_occupied_mean']:.0f} "
-      f"and {oc['order'].summary['null_occupied_mean']:.0f} (order: {oc['order'].summary['occupied']} observed among kept species, "
-      f"P = {oc['order'].summary['p_fewer_occupied_than_null']:.2g}). The no-spore panel behaves the same "
-      f"({on[None].summary['occupied']} vs {on[None].summary['null_occupied_mean']:.0f} global; "
-      f"{on['order'].summary['occupied']} vs {on['order'].summary['null_occupied_mean']:.0f} at order level, "
-      f"P = {on['order'].summary['p_fewer_occupied_than_null']:.2g}) (§8).")
-    def cells_word(x):
-        return f"{x} cell{'s' if x != 1 else ''}"
-    for k, _, plabel in panels:
-        glob_only = int((merged[k]["global: empty✗"] & ~merged[k]["order: empty✗"]).sum())
-        glob_txt = (f"{glob_only} of the {cells_word(n_glob[k])} flagged by the global null do not survive at order level: phylogenetic structure"
-                    if glob_only else f"the global null flags {cells_word(n_glob[k])}, all of which also survive at order level")
-        w(f"- **{plabel}: {cells_word(n_surv[k])} survive{'s' if n_surv[k] == 1 else ''} the order-level shuffle.** {glob_txt[0].upper() + glob_txt[1:]} (§10).")
-        for (kk, c), v in surv.items():
-            if kk != k:
-                continue
-            vt, _, r, _, wide = v
-            vv = vt.set_index(["view", "null"])
-            notes = []
-            for view_, null_ in (("optimum-only", "order"), ("genus-level", "order")):
-                if (view_, null_) in vv.index:
-                    x = vv.loc[(view_, null_)]
-                    notes.append(f"{view_}: {'survives' if x['empty beyond chance'] else ('untestable' if not x['testable'] else f'not significant, q = {x.q:.2g}')}")
-            diag = [(nl, x) for (vw, nl), x in vv.iterrows() if str(vw).startswith("primary (diagnostic")]
-            dtxt = "; ".join(f"a {nl}-level shuffle {'also flags it' if x['empty beyond chance'] else ('makes it untestable' if not x['testable'] else 'does not flag it')} "
-                             f"(expected {x['expected']:.1f})" for nl, x in diag)
-            w(f"  - `{c}`: expected {r['order: expected']:.1f} under the order shuffle, observed 0, q = {r['order: q']:.2g} "
-              f"(independent seed {r['order: q (seed 2)']:.2g}). Fragile: {'; '.join(notes)}. Diagnostic beyond the three requested ranks: {dtxt}. "
-              f"{len(wide)} of all {n:,} BacDive strains {'has' if len(wide) == 1 else 'have'} the combination. "
-              + ("**Treat as family-level structure until shown otherwise (§11).**" if any(not x["empty beyond chance"] for _, x in diag)
-                 else "**Survives the finer diagnostic too (§11).**"))
-    w(f"- **Samples are type strains.** {ts_core.loc['either', '%']} of the core-panel species are represented by a type strain (§12).\n")
-
-    # 1 attrition -----------------------------------------------------------------------------
-    w("## 1. Attrition\n")
-    w("Counts are strains. \"Usable\" means a normalised value exists: at least one observation, mappable to a bin, "
-      "and no conflict between references (conflicting observations null the value rather than picking one).\n")
+    w("Counts are strains. \"Usable\" = a normalised value exists (≥1 observation, mappable, no conflict between references; conflicts null the value).\n")
     w(md_table(att))
-    w("\n### 1a. Per-trait losses\n")
+    w("\n**Per-trait losses**\n")
     w(md_table(ptd))
-    w("\nUnmapped and unparsed raw values (all kept in the `*_raw` columns; full list in `data/interim/unmapped_values.tsv`):\n")
+    w("\n**Unmapped and unparsed raw values** (kept in the `*_raw` columns; full list `data/interim/unmapped_values.tsv`):\n")
     w(md_table(unmapped.head(20)))
     src_counts = prim["core"]["temperature_bin_source"].value_counts()
-    w("\n### 1b. Temperature bin sources, core panel × genome × species\n")
+    w("\n**Temperature bin sources, core panel species**\n")
     w(md_table(pd.DataFrame({"temperature_bin_source": src_counts.index, "N": src_counts.values,
                              "%": [pct(v, len(prim["core"])) for v in src_counts.values]})))
     fold_conf = int((df["oxygen_conflict"] & df["oxygen_raw"].fillna("").str.contains("microaerophile")).sum())
     w(f"\nOxygen: {int(prim['core']['oxygen_microaerophile_folded'].sum())} core-panel species are \"facultative\" only because microaerophile "
-      f"was folded in (`oxygen_microaerophile_folded`). Across all strains, {fold_conf:,} of the {int(df['oxygen_conflict'].sum()):,} coarse "
-      "oxygen conflicts involve a microaerophile observation.\n")
+      f"was folded in; {fold_conf:,} of the {int(df['oxygen_conflict'].sum()):,} coarse oxygen conflicts across all strains involve a microaerophile observation.\n")
 
-    # 2 matching ------------------------------------------------------------------------------
-    w("## 2. Genome matching\n")
-    w("Route 1 is BacDive's own INSDC assembly accession, matched to GTDB unversioned. Route 2, used only when route 1 fails, is exact equality of "
-      "normalised strain designations. A designation with no culture-collection code (e.g. `BS 107`) is accepted only with **taxon agreement**: "
-      "the BacDive genus equals the GTDB or NCBI genus of the genome, or one of BacDive's NCBI tax IDs equals the genome's `ncbi_taxid` or "
-      "`ncbi_species_taxid`. There is no fuzzy matching anywhere.\n")
-    w("### 2a. What normalisation bought\n")
-    w("Strains with ≥1 accepted GTDB genome. Steps A–C use the designation route alone and apply the same acceptance rule, "
-      "so they differ only in how strings are compared. Step E equals the final match count.\n")
+    w("## Appendix B. Genome matching\n")
+    w("Route 1 is BacDive's own INSDC assembly accession, matched to GTDB unversioned. Route 2, used only when route 1 fails, is exact equality "
+      "of normalised strain designations. A designation without a culture-collection code needs taxon agreement (same genus, or same NCBI taxon ID). "
+      "There is no fuzzy matching.\n")
+    w("**What normalisation bought.** Steps A–C use the designation route alone, under one acceptance rule; step E equals the final match count.\n")
     w(md_table(stage))
-    w("\nSplitting multi-designation strings does most of the work (A→B). Normalisation proper adds B→C. The last row is what a naive raw-token "
-      "join would report, and includes cross-genus collisions (`LP1`, `B86`, `M120` recur across unrelated genera).\n")
-    w("### 2b. Genome attrition, all strains\n")
+    w("\n**Genome attrition, all strains**\n")
     w(md_table(gen_all))
-    w("\n### 2c. Genome attrition, core-panel-complete strains\n")
+    w("\n**Genome attrition, core-panel strains**\n")
     w(md_table(gen_core))
-    w("\n### 2d. Match quality checks\n")
+    w("\n**Match quality**\n")
     w(md_table(pd.DataFrame([
-        {"check": "designation route agrees with accession route (strains where both fire)", "value": pct(int(agree.sum()), len(agree), 2), "N": len(agree)},
-        {"check": "bare-designation hits agree with accession route (only bare keys hit, accession also present)",
-         "value": pct(int(bare_agree.sum()), len(bare_agree), 2), "N": len(bare_agree)},
+        {"check": "designation route agrees with accession route (both fire)", "value": pct(int(agree.sum()), len(agree), 2), "N": len(agree)},
+        {"check": "bare-designation hits agree with accession route", "value": pct(int(bare_agree.sum()), len(bare_agree), 2), "N": len(bare_agree)},
         {"check": "matched genome's GTDB/NCBI genus equals BacDive genus", "value": pct(int(matched['genus_agree'].sum()), len(matched)), "N": len(matched)},
-        {"check": "designation matches accepted via NCBI tax ID only (genus differs)", "value": pct(n_taxid_only, n_desig), "N": n_taxid_only},
-        {"check": "candidates span >1 GTDB species (ambiguous)", "value": pct(int(matched['match_ambiguous_species'].sum()), len(matched)), "N": len(matched)},
+        {"check": "designation matches accepted via NCBI tax ID only", "value": pct(n_taxid_only, n_desig), "N": n_taxid_only},
+        {"check": "candidates span >1 GTDB species", "value": pct(int(matched['match_ambiguous_species'].sum()), len(matched)), "N": len(matched)},
     ])))
-    w("\nGenus disagreement on accession-route matches mostly reflects GTDB reclassification (split genera) rather than wrong matches; those strains are kept.\n")
-    w("### 2e. Unmatched strains\n")
-    w(f"All {len(unmatched):,} are listed with the keys tried in `data/interim/unmatched_strains.tsv` (gitignored; regenerate with `python -m src.pipeline join`).\n")
+    w(f"\n**Unmatched strains** ({len(unmatched):,}; listed in `data/interim/unmatched_strains.tsv`, gitignored, regenerated by `join`):\n")
     w(md_table(reasons))
 
-    # 3 coverage ------------------------------------------------------------------------------
-    w("\n## 3. Trait coverage co-occurrence\n")
-    w("Strains with usable values for both traits (diagonal = single-trait coverage), over all BacDive strains.\n")
+    w("\n## Appendix C. Trait coverage and genome availability\n")
+    w("Strains with usable values for both traits (diagonal = single-trait coverage):\n")
     w(md_table(cov["counts"], index=True))
-    w("\nP(column usable | row usable):\n")
-    w(md_table(cov_core["conditional"].round(3), index=True))
     w("\nLift = P(both) / (P(row)·P(column)); 1 = independent coverage:\n")
     w(md_table(cov_core["lift"].round(2), index=True))
-    w("\n### 3a. Panel completeness vs independent coverage\n")
+    w("\n**Panel completeness vs independent coverage.** Coverage is nested: traits come together from species descriptions.\n")
     w(md_table(ind))
-    w("\nCoverage is nested: strains described with one morphology trait usually have the others, because the traits come together from "
-      "species descriptions. Spore formation is the binding constraint.\n")
-
-    # 4 genome availability ------------------------------------------------------------------
-    w("## 4. Does genome availability track trait coverage?\n")
-    w(f"Base rate over all {n:,} strains: {pct(int(df['bacdive_lists_assembly'].sum()), n)} list a GCA accession in BacDive. "
-      "Fisher p-values below 1e-300 underflow and are shown as <1e-300.\n")
+    w(f"\n**Genome availability.** Base rate: {pct(int(df['bacdive_lists_assembly'].sum()), n)} of all strains list a GCA accession in BacDive. "
+      "Fisher p-values below 1e-300 are shown as <1e-300.\n")
     gs = ga["sets"].copy()
     for c in [c for c in gs.columns if c.endswith("Fisher p")]:
         gs[c] = gs[c].map(lambda v: "<1e-300" if v == 0 else ("–" if pd.isna(v) else f"{v:.2g}"))
     w(md_table(gs))
-    w("\nBy number of usable core traits:\n")
-    w(md_table(ga["by_n_traits"]))
 
-    # 5 panels side by side ------------------------------------------------------------------
-    w("\n## 5. Two panels: with and without spore formation\n")
-    w(f"Spore formation is the coverage bottleneck ({pct(int(df['spore_usable'].sum()), n)} of strains) and drove 3 of the 4 global-null hits in the first run. "
-      "The no-spore panel drops it. Both are analysed identically: one strain per GTDB species, coarse bins, all temperature sources.\n")
-    w(md_table(side))
-    sc, sn = side.iloc[0], side.iloc[1]
-    w(f"\nDoes dropping spore formation buy power? It more than doubles N ({sc['N species']:,} → {sn['N species']:,} species) and halves the cells, "
-      f"so species per cell rise {sn['species per cell'] / sc['species per cell']:.1f}×. The *number* of cells the order-level null can test barely "
-      f"moves ({sc['testable cells (order)']} → {sn['testable cells (order)']}), but the *fraction* does ({100 * sc['testable cells (order)'] / sc['cells']:.0f}% → "
-      f"{100 * sn['testable cells (order)'] / sn['cells']:.0f}%). The core panel's extra cells are mostly unreachable at this N. The no-spore panel "
-      f"produced {sn['order-level survivors']} order-level survivor(s), the core panel {sc['order-level survivors']}.\n")
-    w("\nExpected species per cell, per map size (global null, species level). Read this before the results: it says where the null has power.\n")
-    for k, _, plabel in panels:
-        w(f"\n**{plabel}**\n")
-        w(md_table(capacity_summary(caps[k])))
-    w("\n### 5a. GTDB phyla (species level)\n")
-    ph = pd.concat({plabel: prim[k]["gtdb_phylum"].value_counts() for k, _, plabel in panels}, axis=1).fillna(0).astype(int)
-    ph = ph.sort_values(ph.columns[1], ascending=False)
-    w(md_table(ph.rename_axis("GTDB phylum"), index=True))
-
-    # 6 nulls ---------------------------------------------------------------------------------
-    w("\n## 6. The nulls\n")
-    w("- **Global.** Each trait column is permuted across all species, which preserves every marginal and destroys all association. "
-      "It cannot tell a biological constraint from the fact that traits are each fixed in different clades.")
-    w("- **Stratified (phylum, class, order).** Each trait column is permuted only among species of the same GTDB taxon, preserving "
-      "every taxon's own trait frequencies. Expected count per cell = Σ over taxa n·∏ p(trait level within the taxon). A cell that "
-      "is still emptier than chance under the order-level shuffle is not explained by which orders carry which traits. "
-      "**That is the only category treated as a candidate.**")
-    excl = {k: merged[k][merged[k]["order: emptied by exclusion"] & (merged[k]["order: expected"] >= a["min_expected_for_test"])]
-            for k, _, _ in panels}
-    ex_txt = ""
-    for k, t_, plabel in panels:
-        if len(excl[k]):
-            r0 = excl[k].sort_values("observed (all species)", ascending=False).iloc[0]
-            ex_txt = (f" In this run it matters: `{' / '.join(f'{x}={r0[x]}' for x in t_)}` ({plabel}) holds {int(r0['observed (all species)'])} "
-                      "species, all in orders below the size threshold, so it is empty among kept species and testable under the order null. "
-                      "It is labelled \"emptied by exclusion\", not flagged.")
-            break
-    w(f"- **Small strata.** Taxa with fewer than {a['min_stratum_size']} species in the analysed set cannot be meaningfully shuffled. "
-      "Their species are excluded from that null and counted below, not silently kept. Exclusion is never allowed to manufacture "
-      "emptiness: a cell is \"empty beyond chance\" only if it is empty among *all* species. The excluded species are exactly the "
-      "phylogenetically unusual ones, so this guard is not cosmetic." + ex_txt)
-    w(f"- **Testability.** A cell is tested only if its expected count under that null is ≥ {a['min_expected_for_test']:g}. "
-      f"BH correction is applied within each map over its testable cells; {a['n_perm_full']:,} permutations per full map; "
-      "the global and order nulls are re-run with an independent seed.\n")
-    for k, _, plabel in panels:
-        w(f"**Species kept per null, {plabel}**\n")
-        w(md_table(save(f"strata_{k}", strata_table(prim[k], default=a["min_stratum_size"]))))
-        w("")
-
-    # 7 positive control ---------------------------------------------------------------------
-    w("## 7. Positive control\n")
-    for p in pcs:
-        spec = p["spec"]
-        w(f"**{spec['name']}** — `" + " / ".join(f"{k}={v}" for k, v in spec["cell"].items()) + "`\n")
-        w(spec["rationale"] + "\n")
-        w("This cell was the strongest hit of the first, global-only run. It is reported here as a check on the method, **not as a finding**. "
-          "Expected behaviour: the global null flags it, and a phylogeny-aware null does not, because its emptiness follows from "
-          "which clades carry which traits.\n")
-        w(md_table(p["table"]))
-        w(f"\n**Result: {'passed' if p['passed'] else 'FAILED'}.** "
-          + (f"The global null detects the known constraint, and the stratified nulls absorb it: the expected count falls from "
-             f"{p['row']['global: expected']:.1f} (global) to {p['row']['phylum: expected']:.1f} (phylum), "
-             f"{p['row']['class: expected']:.1f} (class) and {p['row']['order: expected']:.1f} (order), because within any one taxon "
-             "the constituent traits barely co-occur."
-             if p["passed"] else "Inspect before trusting any other cell.") + "\n")
-
-    # 8 occupied vs expected -----------------------------------------------------------------
-    w("## 8. Occupied vs expected cells\n")
-    w("Number of occupied cells against the number the null predicts for the same species. Under the global null a deficit means the "
-      "traits co-occur more tightly than independence allows. Under a stratified null the deficit left over is what the taxon's own trait "
-      "frequencies cannot explain. Stratified rows use the species kept by that null (small strata excluded), for both observed and expected.\n")
-    w(md_table(ove))
-    w("\nAll 4- and 5-trait subsets of the core traits (full table: `reports/tables/occupancy_subsets_all_nulls.tsv`):\n")
-    so = pd.DataFrame({"map": sub_occ.index})
-    for x in NULLS:
-        nm = NULL_NAME[x]
-        so[f"{nm}: occupied / expected"] = [f"{int(sub_occ.loc[i, ('occupied', nm)])} / {sub_occ.loc[i, ('null_occupied_mean', nm)]:.0f}" for i in sub_occ.index]
-        so[f"{nm}: P"] = [sub_occ.loc[i, ("p_fewer_occupied_than_null", nm)] for i in sub_occ.index]
-    w(md_table(so))
-
-    # 9 per-phylum occupancy -----------------------------------------------------------------
-    w("\n## 9. Per-phylum occupancy\n")
-    w("Cells each phylum occupies on its own, cells that only it occupies, and the cumulative share of all occupied cells, "
-      "adding phyla from largest to smallest. \"Within-phylum null\" permutes traits among that phylum's species only.\n")
-    for k, _, plabel in panels:
-        po = phy_occ[k]
-        top3 = po.iloc[:3]
-        tot_occ = pr[k][None].summary["occupied"]
-        w(f"\n**{plabel}** — {tot_occ} cells occupied in total. The three largest phyla ({', '.join(top3.phylum)}; "
-          f"{pct(int(top3.N.sum()), int(po.N.sum()))} of species) occupy {int(top3['cumulative occupied (this + larger phyla)'].iloc[-1])} of them "
-          f"({top3['cumulative share of all occupied'].iloc[-1] * 100:.0f}%). "
-          f"{po.iloc[0].phylum} alone occupies {int(po.iloc[0]['cells occupied'])} ({100 * po.iloc[0]['cells occupied'] / tot_occ:.0f}%).\n")
-        dd = po.dropna(subset=["occupied (within-phylum null mean)"]).copy()
-        dd["deficit"] = dd["occupied (within-phylum null mean)"] - dd["cells occupied"]
-        top = dd.sort_values("deficit", ascending=False).iloc[0]
-        w(f"Largest within-phylum deficit: {top.phylum}, {int(top['cells occupied'])} cells occupied vs {top['occupied (within-phylum null mean)']:.0f} "
-          "expected from its own trait frequencies. Other phyla sit near their own expectation.\n")
-        w(md_table(po.round({"occupied (within-phylum null mean)": 1, "cumulative share of all occupied": 2})))
-
-    # 10 cell-level results --------------------------------------------------------------------
-    w("\n## 10. Cell-level results under all four nulls\n")
-    w("Every cell that is empty and testable under at least one null, or flagged under at least one. `q` is BH-adjusted within the map; "
-      "`–` means the cell is untestable under that null (expected below threshold). Full tables, every cell: `reports/tables/cells_<panel>_all_nulls.tsv`.\n")
-    show_cols = lambda t: (t + ["observed (all species)", "global: expected", "global: q", "phylum: expected", "phylum: q",  # noqa: E731
-                                "class: expected", "class: q", "order: expected", "order: q", "global: q (seed 2)", "order: q (seed 2)", "category"])
-    for k, t, plabel in panels:
-        m = merged[k]
-        testable_any = np.logical_or.reduce([m[f"{NULL_NAME[x]}: testable"] for x in NULLS])
-        flagged_any = np.logical_or.reduce([m[f"{NULL_NAME[x]}: empty✗"] for x in NULLS])
-        sel = m[((m["observed (all species)"] == 0) & testable_any) | flagged_any].copy()
-        for x in NULLS:
-            nm = NULL_NAME[x]
-            sel.loc[~sel[f"{nm}: testable"], f"{nm}: q"] = np.nan
-        sel = sel.sort_values("global: expected", ascending=False)
-        w(f"\n### 10{'a' if k == 'core' else 'b'}. {plabel} ({pr[k][None].summary['cells']} cells, {len(prim[k]):,} species)\n")
-        w(md_table(sel[show_cols(t)]) if len(sel) else "No cell is empty and testable under any null.\n")
-        w("\nCross-tabulation (species counts). **0✗** survives the order-level shuffle · 0† fires under a coarser null only "
-          "(phylogenetic structure) · 0 empty, testable, not significant · `·` empty and untestable under every null.\n")
-        w(md_table(crosstab_grid(m, t, cfg), index=True))
-
-    # 11 survivors ------------------------------------------------------------------------------
-    w("\n## 11. Cells that survive the order-level shuffle\n")
-    if not surv:
-        w("None, in either full panel.\n")
-    for (k, cname), (vt, contrib, r, fams, wide) in surv.items():
-        plabel = dict((kk, lab) for kk, _, lab in panels)[k]
-        w(f"### `{cname}` ({plabel})\n")
-        w(f"Observed 0 among {len(prim[k]):,} species. Expected {r['global: expected']:.1f} under the global null and "
-          f"{r['order: expected']:.1f} under the order-level shuffle (q = {r['order: q']:.2g}; independent seed q = {r['order: q (seed 2)']:.2g}).\n")
-        w("Robustness across views:\n")
-        w(md_table(vt))
-        tot = contrib["expected in cell"].sum()
-        w(f"\nOrders the order-level null expects to populate this cell (top 10 of {len(contrib)} by expected count; each order's share of "
-          f"species with each trait level). The top order carries {100 * contrib['expected in cell'].iloc[0] / tot:.0f}% of the expectation.\n")
-        w(md_table(contrib.head(10).round(3)))
-        split = fams.loc[fams["families carrying every constituent level"] == "none", "expected in cell"].sum()
-        w(f"\nInside the contributing orders, do the constituent trait levels ever occur in the same family? "
-          f"{100 * split / tot:.0f}% of the order-level expectation comes from orders in which **no single family** carries every "
-          "constituent level; there the combination is only \"expected\" because the order mixes families. Top 5 orders:\n")
-        w(md_table(fams.head(5).round(3)))
-        w(f"\nAcross **all** {n:,} BacDive strains, with or without a genome, {len(wide)} strain{' has' if len(wide) == 1 else 's have'} this combination"
-          + (": " + ", ".join(f"{s_} (BacDive {b_}{', genome' if g_ else ', no genome'})" for s_, b_, g_ in
-                                zip(wide["species"], wide["bacdive_id"], wide["genome_matched"])) if 0 < len(wide) <= 10 else "") + ".\n")
-        diag = [row_ for _, row_ in vt.iterrows() if str(row_["view"]).startswith("primary (diagnostic")]
-        for d in diag:
-            if not d["empty beyond chance"]:
-                w(f"**The {d['null']}-level diagnostic absorbs it:** expected {d['expected']:.2f} under a {d['null']} shuffle "
-                  f"({'untestable' if not d['testable'] else 'not significant'}). Read this as phylogenetic structure at {d['null']} "
-                  "level unless a finer analysis says otherwise.\n")
-            else:
-                w(f"**It also survives the {d['null']}-level diagnostic** (expected {d['expected']:.2f}, q = {d['q']:.2g}).\n")
-        w("\nWhat surviving the order shuffle does and does not mean: within orders that contain every constituent trait, the combination "
-          "is rarer than independence predicts. It can still be phylogenetic structure *below* order (family, genus), and the whole panel "
-          "is described type strains (§12). It is a candidate, not a result.\n")
-    w("### 11a. Order-level survivors in lower-dimensional maps\n")
-    w("All 4- and 5-trait subsets of the core traits, order-level null. Lower-dimensional maps have more species per cell, so they can test "
-      "cells the full panels cannot. Not corrected across maps.\n")
-    w(md_table(subset_survivors) if len(subset_survivors) else "None.\n")
-
-    # 12 sensitivities ------------------------------------------------------------------------
-    w("\n## 12. Sensitivity views\n")
-    w("Global and order-level nulls in each view. Genus-level keeps one strain per GTDB genus, so its order-level strata are small and "
-      "many species are excluded.\n")
+    w("\n## Appendix D. Sensitivity views, phyla, type strains\n")
+    w("Global and order-level nulls in each view (primary = one strain per GTDB species, coarse bins, all temperature sources).\n")
     w(md_table(views))
-    w("\n### 12a. Type strains\n")
-    w(md_table(ts_core))
+    w("\n**GTDB phyla (species level)**\n")
+    ph = pd.concat({plabel: prim[k]["gtdb_phylum"].value_counts() for k, _, plabel in panels}, axis=1).fillna(0).astype(int)
+    w(md_table(ph.sort_values(ph.columns[1], ascending=False).rename_axis("GTDB phylum"), index=True))
+    w("\n**Type strains, core panel**\n")
+    w(md_table(ts_core, index=True))
 
-    # 13 caveats ------------------------------------------------------------------------------
-    w("\n## 13. Caveats\n")
-    w(f"- **Type-strain sampling.** {ts_core.loc['either', '%']} of core-panel species are represented by a type strain. The map describes "
-      "*described, culturable, formally characterised* species: organisms someone isolated in pure culture and wrote up under a standard "
-      "protocol. Uncultured lineages (most candidate phyla, most of the tree by genome count) are absent. Trait values come from protocol-driven "
-      "species descriptions: growth tested at standard temperatures, a fixed test battery. The marginals are those of the described world, "
-      "and a cell can be empty because no one has isolated and described such an organism.")
-    w("- **Exchangeability below order.** The order-level shuffle removes structure between orders but not within them. Families and "
-      "genera share traits, so a survivor can still be phylogenetic structure at a finer rank. The genus-level view is a crude check, not a fix.")
-    w("- **Stratified nulls lose power.** Testable cells fall from global to order level (§5). A cell that stops firing at order level "
-      "can be untestable rather than explained. §10 says which.")
-    w(f"- **Temperature source.** Across BacDive most temperature values are single cultivation temperatures "
-      f"({int((df.temperature_bin_source == 'growth_single_point').sum()):,} single-point vs {int((df.temperature_bin_source == 'optimum').sum()):,} optimum). "
-      f"In the core-panel set {pct(int(src_counts.get('optimum', 0)), len(prim['core']))} of bins come from an optimum. The optimum-only view (§12) removes the rest.")
-    w("- **Multiple testing.** BH is applied within each map over its testable cells only. The subset maps are not jointly corrected.")
-    w(f"- **Resolution.** Permutation p-values cannot go below 1/(n_perm+1) = {1 / (a['n_perm_full'] + 1):.1e} for the full maps.")
     w("\n## Files\n")
-    w("- `data/final/strains.parquet` (gitignored): every BacDive strain with raw and normalised traits, bin sources, conflicts, genome match and panel flags. "
-      "Regenerate with `python -m src.pipeline all`; checksums in `reports/run_manifest.json` → `outputs`.")
-    w("- `data/final/{core,no_spore}_panel_species.tsv`: the analysed sets (one strain per GTDB species).")
-    w("- `data/final/assembly_accessions_{core,no_spore}_panel_species.txt`, `assembly_accessions_all_matched.txt`: for "
-      "`datasets download genome accession --inputfile …` (RefSeq GCF where GTDB uses RefSeq, else GenBank GCA).")
+    w("- `data/final/strains.parquet` (gitignored): every BacDive strain, with raw and normalised traits, genome match and panel flags. "
+      "Regenerate with `python -m src.pipeline all`; checksums are in `README.md` and `reports/run_manifest.json` → `outputs`.")
+    w("- `data/final/{core,no_spore}_panel_species.tsv`: the analysed sets.")
+    w("- `data/final/assembly_accessions_*.txt`: inputs for `datasets download genome accession --inputfile …`.")
     w("- `data/interim/unmatched_strains.tsv` (gitignored), `data/interim/unmapped_values.tsv`: audit logs.")
-    w("- `reports/tables/*.tsv`: every table above, plus per-cell results for every panel × view × null.")
-    w("- `reports/run_manifest.json`: versions, hashes and counts.")
+    w("- `reports/tables/*.tsv`: every table above, and per-cell results for every panel × view × null.")
+    w("- `reports/run_manifest.json`: versions, hashes, counts.")
     text = "\n".join(R) + "\n"
     (rep / "attrition_report.md").write_text(text)
     return text

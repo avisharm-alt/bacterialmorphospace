@@ -3,8 +3,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.analysis import (analysis_set, assign_strata, bh_qvalues, dereplicate, expected_counts, occupancy, permutation_null,
-                          phylum_occupancy)
+from src.analysis import (analysis_set, assign_strata, bh_qvalues, dereplicate, detectable_zero, expected_counts, occupancy,
+                          permutation_null, phylum_occupancy)
 from src.config import load_config
 
 CFG = load_config()
@@ -201,3 +201,38 @@ def test_exclusion_of_small_strata_never_manufactures_an_empty_cell():
     assert cell.observed == 0 and cell.observed_all_species == 6 and cell.emptied_by_exclusion
     assert not cell.empty_beyond_chance and o.summary["cells_emptied_by_exclusion"] == 1
     assert o.summary["species_excluded"] == 6
+
+
+
+def test_detectable_zero_bounds_and_empirical_threshold():
+    rng = np.random.default_rng(9)
+    n = 3000
+    df = _df([{"gram": g, "spore": s, "motility": m, "gtdb_species": f"sp{i}", "gtdb_order": f"O{i % 6}"} for i, (g, s, m) in
+              enumerate(zip(rng.choice(["negative", "positive"], n, p=[0.7, 0.3]), rng.choice(["no", "yes"], n, p=[0.9, 0.1]),
+                            rng.choice(["no", "yes"], n)))])
+    occ = occupancy(df, ["gram", "spore", "motility"], CFG, n_perm=2000, keep_cells=True, stratify="order")
+    d = detectable_zero(occ, CFG)
+    m = d["testable cells (m)"]
+    assert m == 8
+    assert np.isclose(d["E needed, guaranteed (Poisson ln(m/α))"], np.log(m / 0.05))
+    assert np.isclose(d["E needed, best case (Poisson ln(1/α))"], np.log(20))
+    # every cell here has E >= ~45, far above any threshold: all guaranteed detectable
+    assert d["cells where a true zero would be detected on its own (empirical p0 <= α/m)"] == 8
+    assert d["cells with E >= minimum detectable constraint"] == 8
+    assert d["minimum detectable constraint (E)"] >= max(3, np.log(m / 0.05))
+    # the empirical threshold must be one of the cells' expected counts, i.e. every cell above it passes
+    ct = occ.cell_table
+    assert d["E needed, guaranteed (empirical, this null)"] in set(ct["expected"])
+
+
+def test_detectable_zero_poisson_matches_permutation_for_a_single_small_cell():
+    # a cell with expected ~7 under a global null: p0 ~ exp(-7) ~ 9e-4
+    rng = np.random.default_rng(10)
+    n = 2000
+    df = _df([{"gram": g, "spore": s, "gtdb_species": f"sp{i}"} for i, (g, s) in
+              enumerate(zip(rng.choice(["negative", "positive"], n, p=[0.93, 0.07]), rng.choice(["no", "yes"], n, p=[0.95, 0.05])))])
+    occ = occupancy(df, ["gram", "spore"], CFG, n_perm=20000, keep_cells=True)
+    t = occ.cell_table.set_index(["gram", "spore"])
+    e = t.loc[("positive", "yes"), "expected"]
+    assert 3 < e < 12
+    assert abs(np.log(t.loc[("positive", "yes"), "p_empty_under_null"] + 1e-6) + e) < 1.5  # log p0 ~ -E

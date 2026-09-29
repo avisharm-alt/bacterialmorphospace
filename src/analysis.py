@@ -305,6 +305,60 @@ def occupancy(sub: pd.DataFrame, traits: list[str], cfg: Config, binning: str = 
     return Occupancy(traits, binning, n, ncell, occupied, summary, table)
 
 
+def detectable_zero(occ: Occupancy, cfg: Config) -> dict:
+    """How large must a constraint be for this null to have detected a true zero at q < alpha?
+
+    "Size" is the cell's expected count E under the null. A truly empty cell has permutation
+    p-value p0(E) = P(null count = 0). With m testable cells, BH gives
+      q <= p0 * m            -> p0 <= alpha/m is SUFFICIENT for q < alpha, whatever the other cells do
+      q >= p0                -> p0 <= alpha is NECESSARY
+    and a cell is only tested at all if E >= min_expected_for_test.
+
+    Poisson approximation: p0 ~ exp(-E), so E >= ln(m/alpha) (guaranteed) and E >= ln(1/alpha)
+    (best case). Within-stratum permutation is usually less dispersed than Poisson, so the empirical
+    p0 from the permutations is also reported: the smallest E above which every cell's empirical p0
+    meets the sufficient bound. The headline "minimum detectable constraint" is the largest of the
+    Poisson bound, the empirical threshold and the testability floor.
+    """
+    a = cfg["analysis"]
+    alpha, floor = a["fdr_alpha"], a["min_expected_for_test"]
+    ct = occ.cell_table
+    s = occ.summary
+    m = int(s["testable_cells"])
+    n_perm = int(s["n_perm"])
+    e = ct["expected"].to_numpy()
+    p0 = (1 + n_perm * ct["p_empty_under_null"].to_numpy()) / (n_perm + 1)  # p-value if the cell were empty
+    suff = alpha / m if m else np.nan
+    e_suff_pois = float(np.log(m / alpha)) if m else np.nan
+    e_nec_pois = float(np.log(1 / alpha))
+    order = np.argsort(e)
+    ok = (p0 <= suff) & (e >= floor)
+    # smallest threshold T such that every cell with E >= T would be detected on its own
+    e_suff_emp = np.nan
+    for i in range(len(order)):
+        if ok[order[i:]].all():
+            e_suff_emp = float(e[order[i]])
+            break
+    detectable_any = (e >= floor) & (p0 <= alpha)
+    # Conservative: the Poisson bound, the empirical threshold (Monte Carlo noise near the cut can push
+    # it either way) and the testability floor, whichever is largest.
+    mde = float(np.nanmax([floor, e_suff_pois, e_suff_emp]))
+    above = e >= mde
+    return {
+        "null": s["null"], "species used": s["N"], "cells": s["cells"], "testable cells (m)": m,
+        "E needed, guaranteed (Poisson ln(m/α))": e_suff_pois,
+        "E needed, best case (Poisson ln(1/α))": e_nec_pois,
+        "E needed, guaranteed (empirical, this null)": e_suff_emp,
+        "testability floor": floor,
+        "minimum detectable constraint (E)": mde,
+        "as share of species": mde / s["N"] if s["N"] else np.nan,
+        "cells with E >= minimum detectable constraint": int(above.sum()),
+        "share of expected species mass in those cells": float(e[above].sum() / e.sum()) if e.sum() else np.nan,
+        "cells where a true zero would be detected on its own (empirical p0 <= α/m)": int(ok.sum()),
+        "cells where a true zero could be detected at best (E >= floor, p0 <= α)": int(detectable_any.sum()),
+    }
+
+
 def cell_expected_by_stratum(sub: pd.DataFrame, traits: list[str], cfg: Config, cell: dict[str, str],
                              level: str = "order", binning: str = "coarse") -> pd.DataFrame:
     """Which taxa the stratified null expects to populate `cell`: n_s * prod_k p_{s,k}(cell_k) per stratum."""
