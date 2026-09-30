@@ -329,3 +329,6 @@ until the cost is measured. Time 20 genomes first (CPU only, no GPU):
 This downloads Pfam-A once to the `evo2-pfam` volume, annotates 20 genomes already on `evo2-embeddings` (spread over the four
 phyla), caches each genome's families under `annotations/`, and prints CPU-seconds and wall time per genome with a projection
 to 2,435 genomes. Read the exact dollars for the run off the Modal dashboard and divide by 20; do not budget on a remembered rate.
+
+On a workspace whose `evo2-embeddings` volume is empty, first run `modal run -m src.evo2_modal::fetch_timing_sample --n 20`
+(CPU only, downloads the same 20 genomes `annotate_timing` would sample), then the timing command above.

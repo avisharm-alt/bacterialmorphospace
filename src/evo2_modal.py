@@ -1463,16 +1463,17 @@ def _annotate_genome(acc: str) -> dict:
     return res
 
 
-@app.local_entrypoint()
-def annotate_timing(panel: str = PANEL, n: int = 20, seed: int = 20260929,
-                    phyla: str = "Pseudomonadota,Bacillota,Actinomycetota,Bacteroidota"):
-    """Time Pfam annotation on `n` genomes (spread over the four phyla) that are already on the volume."""
+TIMING_PHYLA = "Pseudomonadota,Bacillota,Actinomycetota,Bacteroidota"
+
+
+def _timing_picks(rows: list[dict], n: int, seed: int, phyla: str, have: set[str] | None = None) -> list[dict]:
+    """`n` panel rows spread round-robin over `phyla`. `have` (volume genome filenames) restricts the pool to
+    genomes already downloaded; None samples from the whole panel."""
     import random
 
-    rows = _read_panel(panel)
     keep = set(phyla.split(","))
-    have = _existing("genomes")
-    pool = [r for r in rows if r["gtdb_phylum"] in keep and f"{r['ncbi_assembly_accession']}.fna.gz" in have]
+    pool = [r for r in rows if r["gtdb_phylum"] in keep
+            and (have is None or f"{r['ncbi_assembly_accession']}.fna.gz" in have)]
     if len(pool) < n:
         raise SystemExit(f"only {len(pool)} genomes of those phyla are on the volume; need {n}")
     rng = random.Random(seed)
@@ -1484,6 +1485,25 @@ def annotate_timing(panel: str = PANEL, n: int = 20, seed: int = 20260929,
         for ph in sorted(by):
             if by[ph] and len(picks) < n:
                 picks.append(by[ph].pop(rng.randrange(len(by[ph]))))
+    return picks
+
+
+@app.local_entrypoint()
+def fetch_timing_sample(panel: str = PANEL, n: int = 20, seed: int = 20260929, phyla: str = TIMING_PHYLA):
+    """Download the `n` genomes annotate_timing samples onto an empty volume. CPU only: no GPU env check, no weights."""
+    picks = _timing_picks(_read_panel(panel), n, seed, phyla)
+    ok, bad = _prepare(picks, skip_checks=True)
+    print(f"{len(ok)} of {len(picks)} genomes on the volume; by phylum: "
+          + ", ".join(f"{ph} {sum(p['gtdb_phylum'] == ph for p in picks if p['ncbi_assembly_accession'] in ok)}"
+                      for ph in sorted({p['gtdb_phylum'] for p in picks})))
+    if bad:
+        raise SystemExit(f"{len(bad)} downloads failed; re-run the same command (finished genomes are cached)")
+
+
+@app.local_entrypoint()
+def annotate_timing(panel: str = PANEL, n: int = 20, seed: int = 20260929, phyla: str = TIMING_PHYLA):
+    """Time Pfam annotation on `n` genomes (spread over the four phyla) that are already on the volume."""
+    picks = _timing_picks(_read_panel(panel), n, seed, phyla, have=_existing("genomes"))
     print("Pfam-A:", prepare_pfam.remote())
     t0 = time.time()
     res = []
