@@ -1,0 +1,3 @@
+	cells	testable	untestable	min_expected_testable	min_expected_bonferroni_detectable	n_bonferroni_detectable_if_empty	poisson_equivalent_E	median_overdispersion_var_over_mean
+ARD	72.0	12.0	60.0	32.4049	32.4049	9.0	5.480638923341991	29.10037057988377
+HRM	72.0	5.0	67.0	122.9272		0.0	4.605170185988092	50.83178628170099

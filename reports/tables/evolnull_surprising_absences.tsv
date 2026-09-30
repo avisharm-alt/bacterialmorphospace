@@ -1,0 +1,11 @@
+cell	cell_label	neighbour_origins	n_neighbours	occupied_neighbours	max_neighbour_origins	own_visits
+56	positive·coccus·yes·no·anaerobe	87.20500000000001	7	6	26.67	3.51
+67	positive·other·yes·no·facultative	86.21	7	6	23.695	4.415
+70	positive·other·yes·yes·facultative	81.09499999999998	7	4	53.225	2.125
+33	negative·other·yes·yes·aerobe	78.01500000000001	7	6	41.5	0.85
+58	positive·coccus·yes·yes·facultative	72.17500000000001	7	3	53.225	0.75
+52	positive·coccus·no·yes·facultative	67.05000000000001	7	5	25.91	1.14
+15	negative·coccus·no·yes·aerobe	58.985	7	5	35.82	1.25
+59	positive·coccus·yes·yes·anaerobe	55.00999999999999	7	4	30.14	3.405
+23	negative·coccus·yes·yes·anaerobe	45.955000000000005	7	4	24.77	1.14
+17	negative·coccus·no·yes·anaerobe	35.845	7	4	15.275	0.91
