@@ -369,3 +369,113 @@ def test_newick_roundtrip_preserves_structure_and_lengths():
     assert np.allclose(sorted(t2.blen), sorted(t.blen))
     sub = phylo.tree_from_newick(t.newick, keep=set(t.labels[:10]))
     assert len(sub.tips) == 10
+
+
+# ---------------------------------------------------------------------------
+# src/evolnull.py pieces that do not need the real panel
+# ---------------------------------------------------------------------------
+from src import evolnull as ev  # noqa: E402
+
+
+def test_cell_statistics_flags_only_testable_cells_that_are_emptier_than_the_null():
+    rng = np.random.default_rng(0)
+    R = 4000
+    # cell 0: expected ~10, observed 0 -> flagged; cell 1: expected ~10, observed 10 -> not; cell 2: expected ~0.2 -> untestable
+    sim = np.column_stack([rng.poisson(10, R), rng.poisson(10, R), rng.poisson(0.2, R), rng.poisson(10, R)])
+    obs = np.array([0, 10, 0, 25])
+    st = ev.cell_statistics(obs, sim)
+    assert st["testable"].tolist() == [True, True, False, True]
+    assert st["flag"].tolist() == [True, False, False, False]  # cell 3 is fuller than expected, cell 2 is untestable
+    assert st["empty_flag"].tolist() == [True, False, False, False]
+    assert st["p_low"][0] == pytest.approx(1 / (R + 1), abs=1e-3) and np.isnan(st["q_low"][2])
+    assert st["p_high"][3] < 0.001
+    assert st["bonferroni_count"][2] == -1 and st["bonferroni_count"][0] >= 0
+
+
+def test_cell_statistics_gives_uniform_p_values_when_observed_comes_from_the_null():
+    rng = np.random.default_rng(1)
+    R, C = 3000, 60
+    sim = rng.poisson(12, (R, C))
+    flagged = 0
+    ps = []
+    for _ in range(60):  # the "observed" table is one more draw from the same null
+        obs = rng.poisson(12, C)
+        st = ev.cell_statistics(obs, sim)
+        flagged += int(st["flag"].any())
+        ps += list(st["p_low"][st["testable"]])
+    assert flagged <= 8  # BH at 5% over 60 datasets: expect ~3, allow generous slack
+    assert abs(np.mean(np.array(ps) < 0.05) - 0.05) < 0.03
+
+
+def test_hamming1_neighbours_counts_and_symmetry():
+    sizes = (2, 3, 2)
+    nb = ev.hamming1_neighbours(sizes)
+    assert all(len(n) == sum(s - 1 for s in sizes) for n in nb)  # 1 + 2 + 1 = 4 neighbours for every cell
+    for c, ns in enumerate(nb):
+        assert c not in ns and all(c in nb[j] for j in ns)
+        for j in ns:
+            a, b = np.unravel_index(c, sizes), np.unravel_index(j, sizes)
+            assert sum(x != y for x, y in zip(a, b)) == 1
+
+
+def test_surprising_absences_ranks_empty_cells_by_neighbour_convergence():
+    sizes = (2, 2)  # cells 0..3; neighbours of 0 are 1 and 2; of 3 are 1 and 2
+    obs = np.array([0, 5, 5, 0])
+    origins = np.array([[0, 30, 40, 0], [0, 34, 44, 0]])  # maps x cells
+    sa = ev.surprising_absences(obs, origins, sizes, top=5)
+    assert set(sa["cell"]) == {0, 3} and sa["neighbour_origins"].tolist() == [32 + 42, 32 + 42]  # mean origins 32 and 42
+    assert sa["occupied_neighbours"].tolist() == [2, 2]
+    obs2 = np.array([0, 5, 0, 0])
+    sa2 = ev.surprising_absences(obs2, origins, sizes, top=5)
+    assert sa2.iloc[0]["cell"] in (0, 3) and set(sa2["cell"]) == {0, 2, 3}
+
+
+def test_map_origins_counts_entries_into_cells_on_a_tree_with_two_traits():
+    """Two independent binary traits on a small tree: origin counts are nonnegative, occupied non-root cells are entered >= once."""
+    rng = np.random.default_rng(3)
+    tree = phylo.tree_from_newick(random_newick(40, rng, scale=0.5))
+    ks = {"a": 2, "b": 2}
+    fits = {t: {"draws": {"ARD": [np.log([1.2, 0.8]).tolist()] * 5}} for t in ks}
+    codes = {t: rng.integers(0, 2, 40) for t in ks}
+    sizes = (2, 2)
+    o = ev.map_origins(tree, ks, fits, codes, sizes, n_maps=12, seed=1, traits=["a", "b"])
+    assert o.shape == (12, 4) and o.min() >= 0
+    occupied = np.bincount(np.ravel_multi_index(tuple(codes[t] for t in ks), sizes), minlength=4) > 0
+    assert (o.sum(0)[occupied] > 0).all() and o.sum() > 0
+
+
+def test_build_comparison_labels_disagreements_and_explains_them():
+    import pandas as pd
+    n = 4
+    grid = pd.DataFrame({"a": list("wxyz"), "cell": list("wxyz")})
+    obs = np.array([0, 0, 0, 3])
+
+    def st(flag, exp=10.0, sd=2.0):
+        return {"expected": np.full(n, exp), "sd": np.full(n, sd), "p_low": np.full(n, .01), "q_low": np.full(n, .01),
+                "testable": np.ones(n, bool), "flag": np.array(flag)}
+    evo = {"ARD": st([True, True, False, False]), "HRM": st([True, False, False, False])}
+
+    def perm(flag, exp=10.0):
+        return pd.DataFrame({"expected": np.full(n, exp), "q_low": np.full(n, .01), "testable": np.ones(n, bool), "emptier_than_chance": np.array(flag)})
+    p = {"global": perm([True, True, True, False]), "phylum": perm([False] * 4), "class": perm([False] * 4), "order": perm([False, False, True, False], exp=4.0)}
+    sd = {k: np.full(n, 1.0) for k in p}
+    c = ev.build_comparison(grid, obs, evo, p, sd)
+    assert c["evo_robust_emptier"].tolist() == [True, False, False, False]  # flagged under BOTH evolutionary nulls
+    assert c["category"].tolist() == ["flagged by both", "permutation + one evolutionary null", "permutation only", "neither"]
+    assert c.loc[2, "note"].startswith("the tree makes this count far more variable")  # evolutionary SD 2.0 > 1.5 x the shuffle's 1.0
+    assert "SD 2.0 vs 1.0 under the order shuffle" in c.loc[2, "note"]
+    assert "order-level shuffle already expects only 4.0" in c.loc[1, "note"]  # evolutionary expects 10.0 > 1.3 x 4.0
+    assert c.loc[3, "note"] == "" and c.loc[0, "note"] == ""
+
+
+def test_power_summary_and_bins_show_overdispersion_against_poisson():
+    rng = np.random.default_rng(4)
+    R = 5000
+    lam = np.array([0.5, 2, 5, 12, 30])
+    sim = np.column_stack([rng.negative_binomial(2, 2 / (2 + m), R) for m in lam])  # over-dispersed counts with mean m
+    st = ev.cell_statistics(np.array([0, 0, 0, 0, 0]), sim)
+    pw = ev.power_summary(st)
+    assert pw["cells"] == 5 and pw["testable"] == int(st["testable"].sum())
+    assert pw["median_overdispersion_var_over_mean"] > 1.5
+    tab = ev.power_by_expected(st)
+    assert (tab["median_P_null_empty"] >= tab["poisson_exp_minus_E"] - 1e-9).all()  # a clade-structured null is emptier than Poisson
