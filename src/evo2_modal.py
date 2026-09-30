@@ -1614,4 +1614,6 @@ def annotate_all(panel: str = PANEL, phyla: str = TIMING_PHYLA, batch: int = 200
     if n_ok < ANNO_MIN_FRACTION * len(rows):
         raise SystemExit(f"Only {n_ok / len(rows):.1%} annotated (need >= {ANNO_MIN_FRACTION:.0%}). Fix the failures above and "
                          "re-run the same command; finished genomes are kept.")
-    print("Fetch the family lists with: modal volume get evo2-embeddings annotations ./pfam_annotations")
+    # the destination directory must already exist: for a missing one, every file is written to the same path and
+    # only the last survives. The files land in pfam_annotations/annotations/<acc>.json
+    print("Fetch the family lists with: mkdir -p pfam_annotations && modal volume get evo2-embeddings annotations ./pfam_annotations")
