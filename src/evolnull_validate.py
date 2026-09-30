@@ -7,7 +7,7 @@
 
 Every study writes a TSV to reports/tables/ and prints a summary. `calibration` is the one that matters for the claim
 "a flagged cell is a candidate for real constraint": under a correct null, BH at 5% should raise a false flag in <= 5%
-of independent-trait datasets. It runs on a random 400-tip subtree of the panel tree to keep it affordable; the
+of independent-trait datasets. It runs on a random 300-tip subtree of the panel tree to keep it affordable; the
 behaviour of the null (not its power on the real tree) is what is being checked.
 """
 from __future__ import annotations

@@ -489,7 +489,7 @@ def write_report(r: dict) -> str:
     if "calibration" in val:
         L += ["## Calibration: does the pipeline cry wolf?", "",
               "Whole pipeline (fit, posterior draws, simulate, BH) on data where the traits evolved independently, so any flag is false. "
-              "400-tip subtrees of the panel tree.", "", md_table(val["calibration"]), ""]
+              "300-tip subtrees of the panel tree.", "", md_table(val["calibration"]), ""]
     if "recovery" in val:
         L += ["## Parameter recovery on the real tree", "", md_table(val["recovery"].round(3)), ""]
     if "coverage" in val:
