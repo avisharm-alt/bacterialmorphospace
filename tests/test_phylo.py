@@ -479,3 +479,69 @@ def test_power_summary_and_bins_show_overdispersion_against_poisson():
     assert pw["median_overdispersion_var_over_mean"] > 1.5
     tab = ev.power_by_expected(st)
     assert (tab["median_P_null_empty"] >= tab["poisson_exp_minus_E"] - 1e-9).all()  # a clade-structured null is emptier than Poisson
+
+
+# ---------------------------------------------------------------------------
+# fast transition matrices and multi-chain MCMC
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("k,kind", [(2, "ARD"), (3, "ER"), (3, "SYM"), (3, "ARD"), (3, "ORD"), (2, "HRM"), (3, "HRM")])
+def test_eigen_transition_matrices_agree_with_expm(k, kind):
+    rng = np.random.default_rng(20)
+    tree = phylo.tree_from_newick(random_newick(60, rng, scale=0.8))
+    m = phylo.RateModel(k, kind)
+    before = dict(phylo._fallbacks)
+    for _ in range(25):
+        th = rng.uniform(-6, 4.5, m.npar)
+        if kind == "HRM":
+            th[m.n_rates] = abs(th[m.n_rates])
+        Q = m.Q(th)
+        fast = phylo.transition_matrices(tree, Q)
+        ref = phylo.transition_matrices(tree, Q, force_expm=True)
+        assert np.abs(fast - ref).max() < 1e-7  # whichever path ran, it must agree with scipy's expm
+        assert np.allclose(fast.sum(2), 1, atol=1e-8) and fast.min() >= 0
+    assert phylo._fallbacks["eig"] > before["eig"]  # the fast path is actually being used
+
+
+def test_transition_matrices_fall_back_to_expm_for_a_defective_generator():
+    tree = phylo.tree_from_newick("(a:0.3,b:0.5);")
+    Q = np.array([[-1.0, 1.0, 0.0], [0.0, -1.0, 1.0], [0.0, 0.0, 0.0]])  # Jordan block: not diagonalisable
+    before = dict(phylo._fallbacks)
+    P = phylo.transition_matrices(tree, Q)
+    assert np.abs(P - phylo.transition_matrices(tree, Q, force_expm=True)).max() < 1e-12
+    assert phylo._fallbacks["expm"] > before["expm"]
+
+
+def test_likelihood_is_unchanged_by_the_fast_path():
+    rng = np.random.default_rng(21)
+    tree = phylo.tree_from_newick(random_newick(80, rng))
+    m = phylo.RateModel(3, "ARD")
+    th = rng.uniform(-2, 1.5, m.npar)
+    obs = rng.integers(0, 3, 80)
+    fast = phylo.Likelihood(tree, m, obs)(th)
+    Q = m.Q(th)
+    L, ls = phylo.conditional_likelihoods(tree, phylo.transition_matrices(tree, Q, force_expm=True), m.tip_lik(obs))
+    assert fast == pytest.approx(ls + np.log(phylo.stationary(Q) @ L[tree.root]), abs=1e-9)
+
+
+def test_multichain_mcmc_reports_convergence_and_matches_the_grid_posterior():
+    rng = np.random.default_rng(22)
+    tree = phylo.tree_from_newick(random_newick(60, rng, scale=0.5))
+    m = phylo.RateModel(2, "ER")
+    st, _ = gillespie_tree(tree, m.Q(np.array([0.0])), 0, rng)
+    lik = phylo.Likelihood(tree, m, st[tree.tips])
+    grid = np.linspace(*phylo.LOG_RATE_BOUNDS, 1500)
+    lp = np.array([m.log_prior(np.array([g])) + lik(np.array([g])) for g in grid])
+    w = np.exp(lp - lp.max())
+    w /= w.sum()
+    mean_exact = (w * grid).sum()
+    fit = phylo.fit_ml(lik, starts=2)
+    r = phylo.run_chains(lik, fit["theta"], fit["hessian"], 2500, rng, n_chains=3)
+    assert len(r["chains"]) == 3 and r["rhat"][0] < 1.1 and r["ess"][0] > 200
+    assert r["chain"][:, 0].mean() == pytest.approx(mean_exact, abs=0.12)
+
+
+def test_rhat_flags_chains_that_disagree():
+    rng = np.random.default_rng(23)
+    good = [rng.normal(0, 1, (500, 1)) for _ in range(3)]
+    bad = [rng.normal(0, 1, (500, 1)), rng.normal(0, 1, (500, 1)), rng.normal(4, 1, (500, 1))]
+    assert phylo.gelman_rubin(good)[0] < 1.05 and phylo.gelman_rubin(bad)[0] > 1.5

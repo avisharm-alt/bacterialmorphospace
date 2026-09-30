@@ -125,9 +125,13 @@ def sizes_of(lv: dict) -> tuple:
 # ---------------------------------------------------------------------------
 # fitting
 # ---------------------------------------------------------------------------
-def fit_trait(tree, obs: np.ndarray, k: int, kinds: list, seed: int, n_iter: int = 3000, n_draws: int = 200,
-              mcmc_kinds=("ARD", "HRM"), starts: int = 4) -> dict:
-    """ML fits of every candidate model (AIC table) plus MCMC posterior draws for the ARD and HRM models."""
+def fit_trait(tree, obs: np.ndarray, k: int, kinds: list, seed: int, n_iter: int = 10_000, n_draws: int = 200,
+              mcmc_kinds=("ARD", "HRM"), starts: int = 6, n_chains: int = 4) -> dict:
+    """ML fits of every candidate model (AIC table) plus MCMC posterior draws for the ARD and HRM models.
+
+    Posterior draws come from `n_chains` dispersed chains (HRM runs twice as long: it has more, weakly identified
+    parameters); R-hat and the pooled effective sample size are stored so convergence can be judged, not assumed.
+    """
     rng = np.random.default_rng(seed)
     out = {"ml": {}, "draws": {}, "mcmc": {}}
     for kind in kinds:
@@ -137,11 +141,12 @@ def fit_trait(tree, obs: np.ndarray, k: int, kinds: list, seed: int, n_iter: int
         out["ml"][kind] = {"theta": fit["theta"].tolist(), "loglik": fit["loglik"], "aic": fit["aic"], "npar": fit["npar"],
                            "at_bound": fit["at_bound"]}
         if kind in mcmc_kinds:
-            it = n_iter if kind == "ARD" else int(n_iter * 4 / 3)
-            ch = phylo.run_mcmc(lik, fit["theta"], fit["hessian"], it, rng)
+            it = n_iter if kind == "ARD" else 2 * n_iter
+            ch = phylo.run_chains(lik, fit["theta"], fit["hessian"], it, rng, n_chains)
             out["draws"][kind] = phylo.thin(ch["chain"], n_draws).tolist()
-            out["mcmc"][kind] = {"iterations": it, "kept": int(len(ch["chain"])), "acceptance": ch["acceptance"],
-                                 "min_ess": float(ch["ess"].min()), "median_ess": float(np.median(ch["ess"]))}
+            out["mcmc"][kind] = {"iterations": it, "chains": n_chains, "kept": int(len(ch["chain"])), "acceptance": ch["acceptance"],
+                                 "min_ess": float(ch["ess"].min()), "median_ess": float(np.median(ch["ess"])),
+                                 "max_rhat": float(ch["rhat"].max())}
     return out
 
 
@@ -159,6 +164,7 @@ def rate_table(fits: dict, levels: dict) -> pd.DataFrame:
                 row["posterior_95"] = "; ".join(f"[{a:.2g},{b:.2g}]" for a, b in zip(np.quantile(d, .025, axis=0), np.quantile(d, .975, axis=0)))
                 row["mcmc_acceptance"] = f["mcmc"][kind]["acceptance"]
                 row["mcmc_min_ess"] = f["mcmc"][kind]["min_ess"]
+                row["mcmc_max_rhat"] = f["mcmc"][kind]["max_rhat"]
             rows.append(row)
     return pd.DataFrame(rows)
 
@@ -559,7 +565,7 @@ def _fit_task(t):
         return t, fit_trait(g["tree"], g["codes"][t], g["ks"][t], KINDS[t], g["seed"] + TRAITS.index(t), g["n_iter"], g["n_draws"])
 
 
-def fit_all(workers: int = 2, n_iter: int = 3000, n_draws: int = 200) -> dict:
+def fit_all(workers: int = 4, n_iter: int = 10_000, n_draws: int = 200) -> dict:
     """Fit every trait (ML for all candidate models, MCMC for ARD and HRM) and cache to data/interim/evolnull_fits.json."""
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor
@@ -585,8 +591,8 @@ def main(argv=None):
 
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=["fit", "analyze"])
-    ap.add_argument("--workers", type=int, default=2)
-    ap.add_argument("--n-iter", type=int, default=3000)
+    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--n-iter", type=int, default=10_000)
     ap.add_argument("--quick", action="store_true", help="tiny settings to check the plumbing")
     a = ap.parse_args(argv)
     t0 = time.time()

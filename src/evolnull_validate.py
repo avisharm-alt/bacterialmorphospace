@@ -135,7 +135,7 @@ def _calibration_task(args):
         return None
     ks = {t: TRUE_ARD[t][0] for t in ev.TRAITS}
     sizes = tuple(ks[t] for t in ev.TRAITS)
-    fits = {t: ev.fit_trait(tree, obs[t], ks[t], ["ARD", "HRM"], seed + i, n_iter=n_iter, n_draws=n_draws, starts=2)
+    fits = {t: ev.fit_trait(tree, obs[t], ks[t], ["ARD", "HRM"], seed + i, n_iter=n_iter, n_draws=n_draws, starts=3, n_chains=3)
             for i, t in enumerate(ev.TRAITS)}
     res = {"truth": truth, "seed": seed}
     flags = {}
@@ -191,10 +191,10 @@ def main(argv=None):
         r = run_recovery(a.workers, a.n or 60, 0, 0)
         r.to_csv(OUT / "evolnull_validation_recovery.tsv", sep="\t", index=False)
     elif a.study == "coverage":
-        r = run_recovery(a.workers, a.n or 40, a.n or 40, 1500, seed=2)
+        r = run_recovery(a.workers, a.n or 100, a.n or 100, 4000, seed=2)
         r.to_csv(OUT / "evolnull_validation_coverage.tsv", sep="\t", index=False)
     else:
-        raw = run_calibration(a.workers, a.n or 30, 400, 600, 60, 50)
+        raw = run_calibration(a.workers, a.n or 24, 300, 3000, 60, 50)
         raw.to_csv(OUT / "evolnull_validation_calibration_raw.tsv", sep="\t", index=False)
         r = summarise_calibration(raw)
         r.to_csv(OUT / "evolnull_validation_calibration.tsv", sep="\t", index=False)

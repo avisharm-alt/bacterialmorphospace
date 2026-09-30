@@ -187,8 +187,34 @@ def stationary(Q: np.ndarray) -> np.ndarray:
     return pi / pi.sum()
 
 
-def transition_matrices(tree: Tree, Q: np.ndarray) -> np.ndarray:
-    return expm(Q[None] * tree.blen[:, None, None])
+EIG_COND_MAX = 1e7  # above this the eigenvector matrix is too ill-conditioned to trust
+_fallbacks = {"eig": 0, "expm": 0}
+
+
+def transition_matrices(tree: Tree, Q: np.ndarray, force_expm: bool = False) -> np.ndarray:
+    """P(t) = expm(Q t) for every branch.
+
+    The matrix exponential dominates the cost of the likelihood (the pruning pass is ~100x cheaper), so P is built from ONE
+    eigendecomposition of Q, exp(lambda t) per branch, and a batched product. The result is accepted only if it passes
+    strict checks (well-conditioned eigenvectors, negligible imaginary part, non-negative entries, rows summing to 1);
+    otherwise the batched scipy expm is used. `_fallbacks` counts which path ran.
+    """
+    t = tree.blen
+    if not force_expm:
+        try:
+            w, V = np.linalg.eig(Q)
+            if np.linalg.cond(V) < EIG_COND_MAX:
+                Vinv = np.linalg.inv(V)
+                P = (V[None, :, :] * np.exp(w[None, None, :] * t[:, None, None])) @ Vinv
+                if np.abs(P.imag).max() < 1e-9:
+                    P = P.real
+                    if P.min() > -1e-9 and np.abs(P.sum(2) - 1).max() < 1e-9:
+                        _fallbacks["eig"] += 1
+                        return np.clip(P, 0.0, None)
+        except np.linalg.LinAlgError:
+            pass
+    _fallbacks["expm"] += 1
+    return expm(Q[None] * t[:, None, None])
 
 
 def conditional_likelihoods(tree: Tree, P: np.ndarray, tip_lik: np.ndarray):
@@ -265,17 +291,20 @@ def numerical_hessian(f, x: np.ndarray, model: RateModel, h: float = 5e-3) -> np
 
 
 def run_mcmc(lik: Likelihood, theta0: np.ndarray, hessian: np.ndarray | None, n_iter: int, rng: np.random.Generator,
-             burn: float = 0.3) -> dict:
-    """Adaptive random-walk Metropolis on the log-rates. Proposal covariance starts from the inverse Hessian and the
-    step size is tuned toward 25% acceptance during burn-in only, so the retained draws come from a fixed kernel."""
+             burn: float = 0.4) -> dict:
+    """Adaptive random-walk Metropolis on the log-rates.
+
+    During burn-in only, the proposal covariance is re-estimated from the chain itself (Haario et al.) and the step size is
+    tuned toward 25% acceptance; both are then frozen, so the retained draws come from a fixed kernel and are a valid MCMC
+    sample. The starting covariance is the inverse Hessian, which is unreliable at a bound, hence the adaptation.
+    """
     m = lik.model
     d = m.npar
     cov = np.eye(d) * 0.05
     if hessian is not None:
         try:
             w, V = np.linalg.eigh(hessian)
-            w = np.clip(w, 1e-2, None)  # a flat direction gets a wide (not infinite) proposal
-            cov = V @ np.diag(1.0 / w) @ V.T
+            cov = V @ np.diag(1.0 / np.clip(w, 1e-2, None)) @ V.T
         except np.linalg.LinAlgError:
             pass
     cov = 0.5 * (cov + cov.T) + 1e-6 * np.eye(d)
@@ -286,10 +315,9 @@ def run_mcmc(lik: Likelihood, theta0: np.ndarray, hessian: np.ndarray | None, n_
         lp = m.log_prior(th)
         return -np.inf if not np.isfinite(lp) else lp + lik(th)
 
-    th, lp = np.asarray(theta0, dtype=float).copy(), None
+    th = np.asarray(theta0, dtype=float).copy()
     lp = logpost(th)
-    chain, acc_recent, n_burn = np.zeros((n_iter, d)), [], int(burn * n_iter)
-    acc_total = 0
+    chain, acc_recent, n_burn, acc_total = np.zeros((n_iter, d)), [], int(burn * n_iter), 0
     for it in range(n_iter):
         prop = th + np.sqrt(scale) * chol @ rng.standard_normal(d)
         lpp = logpost(prop)
@@ -301,10 +329,50 @@ def run_mcmc(lik: Likelihood, theta0: np.ndarray, hessian: np.ndarray | None, n_
             acc_total += ok
         acc_recent.append(ok)
         if it < n_burn and (it + 1) % 100 == 0:
-            r = np.mean(acc_recent[-100:])
-            scale *= np.exp(np.clip(r - 0.25, -0.2, 0.2) * 2)
+            scale *= np.exp(np.clip(np.mean(acc_recent[-100:]) - 0.25, -0.2, 0.2) * 2)
+            if it >= 300:  # adapt the shape from the second half of what has been sampled so far
+                hist = chain[(it + 1) // 2: it + 1]
+                emp = np.cov(hist.T) if len(hist) > d + 2 else None
+                if emp is not None and np.all(np.isfinite(emp)):
+                    try:
+                        chol = np.linalg.cholesky(0.5 * (emp + emp.T) + 1e-3 * np.eye(d) / d)
+                    except np.linalg.LinAlgError:
+                        pass
     post = chain[n_burn:]
     return {"chain": post, "acceptance": acc_total / max(len(post), 1), "ess": effective_sample_size(post)}
+
+
+def run_chains(lik: Likelihood, theta0: np.ndarray, hessian: np.ndarray | None, n_iter: int, rng: np.random.Generator,
+               n_chains: int = 4) -> dict:
+    """Several chains from dispersed starting points; pooled draws, per-parameter R-hat and total ESS."""
+    m = lik.model
+    chains, acc, ess = [], [], []
+    for c in range(n_chains):
+        start = np.asarray(theta0, dtype=float).copy()
+        if c:  # disperse the other starts, staying inside the bounds
+            start = np.clip(start + rng.normal(0, 0.7, m.npar), m.lower + 1e-3, m.upper - 1e-3)
+        r = run_mcmc(lik, start, hessian, n_iter, rng)
+        chains.append(r["chain"])
+        acc.append(r["acceptance"])
+        ess.append(r["ess"])
+    return {"chain": np.concatenate(chains), "chains": chains, "acceptance": float(np.mean(acc)), "ess": np.sum(ess, axis=0),
+            "rhat": gelman_rubin(chains)}
+
+
+def gelman_rubin(chains: list) -> np.ndarray:
+    """Split-R-hat per parameter (values near 1 indicate the chains agree; > 1.1 is a warning)."""
+    halves = []
+    for c in chains:
+        h = len(c) // 2
+        halves += [c[:h], c[h: 2 * h]]
+    x = np.stack(halves)  # (m, n, d)
+    m_, n, _ = x.shape
+    within = x.var(axis=1, ddof=1).mean(0)
+    between = n * x.mean(axis=1).var(axis=0, ddof=1)
+    var_hat = (n - 1) / n * within + between / n
+    with np.errstate(divide="ignore", invalid="ignore"):
+        r = np.sqrt(var_hat / within)
+    return np.where(within > 0, r, 1.0)
 
 
 def effective_sample_size(x: np.ndarray) -> np.ndarray:
