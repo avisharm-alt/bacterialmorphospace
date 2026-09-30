@@ -318,3 +318,14 @@ data/final/     strains.parquet (joined table, gitignored), per-panel species ta
 reports/        attrition_report.md, tables/*.tsv, run_manifest.json
 notebooks/      exploration only; nothing load-bearing
 ```
+
+### Annotation baseline (Pfam), timing step
+
+Phase 2 compares Evo 2 with Pfam presence/absence (pyrodigal + pyhmmer, Pfam-A gathering cutoffs). Nothing is run at scale
+until the cost is measured. Time 20 genomes first (CPU only, no GPU):
+
+    modal run -m src.evo2_modal::annotate_timing --n 20
+
+This downloads Pfam-A once to the `evo2-pfam` volume, annotates 20 genomes already on `evo2-embeddings` (spread over the four
+phyla), caches each genome's families under `annotations/`, and prints CPU-seconds and wall time per genome with a projection
+to 2,435 genomes. Read the exact dollars for the run off the Modal dashboard and divide by 20; do not budget on a remembered rate.

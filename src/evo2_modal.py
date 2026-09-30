@@ -24,6 +24,7 @@ from pathlib import Path
 
 import modal
 
+from src import annotate_core as anno
 from src import embed_core as core
 
 # ---------------------------------------------------------------------------
@@ -1381,3 +1382,132 @@ def _print_nearclade(d: dict, target: str, col: str, pos: str, lopo_path: str) -
 
 
 NC_LABELS_ = {"family": "same family", "order": "same order", "class": "same class", "phylum": "phylum only"}
+
+
+# ---------------------------------------------------------------------------
+# Annotation baseline (Pfam presence/absence). CPU only, no GPU.
+#
+#   modal run -m src.evo2_modal::annotate_timing --n 20
+#
+# times pyrodigal + pyhmmer(Pfam-A, GA cutoffs) on N panel genomes already on the embeddings volume and prints
+# core-seconds per genome. Read the dollar cost of that run off the Modal dashboard (Usage / Billing) and divide
+# by N: that, not a remembered price, is the per-genome rate the full run is budgeted on.
+# ---------------------------------------------------------------------------
+PFAM_DIR = "/pfam"
+PFAM_HMM = f"{PFAM_DIR}/Pfam-A.hmm"
+PFAM_URL = "https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz"
+ANNO_DIR = f"{OUT_DIR}/annotations"
+ANNO_CPUS = 4
+
+pfam_vol = modal.Volume.from_name("evo2-pfam", create_if_missing=True)
+anno_image = modal.Image.debian_slim(python_version="3.11").pip_install("pyrodigal==3.7.1", "pyhmmer==0.12.3", "requests")
+
+
+@app.function(image=anno_image, volumes={PFAM_DIR: pfam_vol}, timeout=1800, cpu=2, memory=4096)
+def prepare_pfam() -> dict:
+    return _plain_call(_prepare_pfam)
+
+
+def _prepare_pfam() -> dict:
+    import gzip
+    import shutil
+
+    import requests
+
+    if os.path.exists(PFAM_HMM) and os.path.getsize(PFAM_HMM) > 1_000_000_000:
+        return {"cached": True, "bytes": os.path.getsize(PFAM_HMM)}
+    gz = f"{PFAM_DIR}/Pfam-A.hmm.gz"
+    with requests.get(PFAM_URL, stream=True, timeout=120) as r:
+        r.raise_for_status()
+        with open(gz, "wb") as f:
+            shutil.copyfileobj(r.raw, f, 1 << 20)
+    with gzip.open(gz, "rb") as fi, open(PFAM_HMM, "wb") as fo:
+        shutil.copyfileobj(fi, fo, 1 << 20)
+    os.remove(gz)
+    n = sum(1 for line in open(PFAM_HMM) if line.startswith("NAME "))
+    if n < 20_000 or os.path.getsize(PFAM_HMM) < 1_000_000_000:
+        os.remove(PFAM_HMM)
+        raise RuntimeError(f"Pfam-A.hmm looks truncated ({n} models); removed it")
+    pfam_vol.commit()
+    return {"cached": False, "bytes": os.path.getsize(PFAM_HMM), "models": n}
+
+
+@app.function(image=anno_image, volumes={OUT_DIR: out_vol, PFAM_DIR: pfam_vol}, timeout=3600, cpu=ANNO_CPUS, memory=8192,
+              max_containers=10)
+def annotate_genome(acc: str) -> dict:
+    return _plain_call(_annotate_genome, acc)
+
+
+def _annotate_genome(acc: str) -> dict:
+    """Pfam families of the WHOLE genome (all contigs). Cached per accession as JSON on the volume."""
+    import json
+    import resource
+
+    os.makedirs(ANNO_DIR, exist_ok=True)
+    dest = f"{ANNO_DIR}/{acc}.json"
+    if os.path.exists(dest):
+        return {"acc": acc, "cached": True}
+    path = f"{GENOME_DIR}/{acc}.fna.gz"
+    if not os.path.exists(path):
+        return {"acc": acc, "error": "genome not on the volume"}
+    t0, c0 = time.time(), sum(os.times()[:4])
+    contigs, total, _ = core.read_contigs(path, min_len=1)
+    res = anno.annotate_contigs(contigs, PFAM_HMM, ANNO_CPUS)
+    wall, cpu = time.time() - t0, sum(os.times()[:4]) - c0  # user+sys of this process and reaped children
+    res.update(acc=acc, cached=False, wall_s=wall, cpu_s=cpu, n_families=len(res["families"]),
+               peak_rss_gb=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6)
+    with open(dest, "w") as f:
+        json.dump({k: res[k] for k in ("acc", "families", "n_proteins", "bp")}, f)
+    out_vol.commit()
+    res.pop("families")
+    return res
+
+
+@app.local_entrypoint()
+def annotate_timing(panel: str = PANEL, n: int = 20, seed: int = 20260929,
+                    phyla: str = "Pseudomonadota,Bacillota,Actinomycetota,Bacteroidota"):
+    """Time Pfam annotation on `n` genomes (spread over the four phyla) that are already on the volume."""
+    import random
+
+    rows = _read_panel(panel)
+    keep = set(phyla.split(","))
+    have = _existing("genomes")
+    pool = [r for r in rows if r["gtdb_phylum"] in keep and f"{r['ncbi_assembly_accession']}.fna.gz" in have]
+    if len(pool) < n:
+        raise SystemExit(f"only {len(pool)} genomes of those phyla are on the volume; need {n}")
+    rng = random.Random(seed)
+    by = {}
+    for r in pool:
+        by.setdefault(r["gtdb_phylum"], []).append(r)
+    picks = []
+    while len(picks) < n:  # round-robin over phyla so the sample is not all Pseudomonadota
+        for ph in sorted(by):
+            if by[ph] and len(picks) < n:
+                picks.append(by[ph].pop(rng.randrange(len(by[ph]))))
+    print("Pfam-A:", prepare_pfam.remote())
+    t0 = time.time()
+    res = []
+    for r in annotate_genome.map([p["ncbi_assembly_accession"] for p in picks], return_exceptions=True):
+        res.append(r)
+    wall = time.time() - t0
+    good = [r for r in res if isinstance(r, dict) and "wall_s" in r]
+    for r in res:
+        if not (isinstance(r, dict) and "wall_s" in r):
+            print("NOT TIMED:", r if not isinstance(r, dict) else r)
+    if not good:
+        raise SystemExit("no genome was timed (all cached or failed); delete /out/annotations/*.json to re-time")
+    print(f"\n{'accession':18s} {'Mb':>6s} {'prot':>6s} {'fams':>5s} {'genecall_s':>10s} {'hmmsearch_s':>11s} {'wall_s':>7s} {'cpu_s':>7s} {'RSS_GB':>6s}")
+    for r in good:
+        print(f"{r['acc']:18s} {r['bp'] / 1e6:6.2f} {r['n_proteins']:6d} {r['n_families']:5d} {r['gene_call_s']:10.1f} "
+              f"{r['hmmsearch_s']:11.1f} {r['wall_s']:7.1f} {r['cpu_s']:7.1f} {r['peak_rss_gb']:6.2f}")
+    cpu = sum(r["cpu_s"] for r in good) / len(good)
+    wl = sum(r["wall_s"] for r in good) / len(good)
+    mb = sum(r["bp"] for r in good) / len(good) / 1e6
+    print(f"\n{len(good)} genomes timed (mean {mb:.2f} Mb); mean {cpu:.0f} CPU-s and {wl:.0f} s wall on {ANNO_CPUS} cores per genome;"
+          f" peak RSS {max(r['peak_rss_gb'] for r in good):.2f} GB")
+    total = 2435
+    print(f"Projected for {total} genomes: {cpu * total / 3600:.0f} CPU-hours, {wl * total / 3600:.1f} container-hours "
+          f"at {ANNO_CPUS} cores (= {wl * total * ANNO_CPUS / 3600:.0f} core-hours billed if memory is not the binding term)")
+    print(f"Measured wall for this call incl. container starts: {wall:.0f} s.")
+    print("NEXT: read the exact dollars for this run off the Modal dashboard (Usage), divide by "
+          f"{len(good)} for $/genome, and multiply by {total}. Do not budget on a remembered rate.")
