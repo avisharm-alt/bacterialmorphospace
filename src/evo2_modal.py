@@ -1537,6 +1537,16 @@ ANNO_STATS_COLS = ["acc", "bp", "n_proteins", "n_families", "gene_call_s", "hmms
 ANNO_MIN_FRACTION = 0.98  # the LOPO needs >= 98% of a panel covered, so a shortfall below this fails the run
 
 
+def _merge_anno_stats(path: str, rows: list[dict]) -> None:
+    """Merge per-genome annotation stats into the TSV at `path` (keyed by accession); never drops earlier rows."""
+    prior = {}
+    if Path(path).exists():
+        with open(path, newline="") as f:
+            prior = {r["acc"]: r for r in csv.DictReader(f, delimiter="\t")}
+    prior.update({r["acc"]: {c: r[c] for c in ANNO_STATS_COLS} for r in rows})
+    _write_tsv(path, [prior[a] for a in sorted(prior)], ANNO_STATS_COLS)
+
+
 @app.local_entrypoint()
 def annotate_all(panel: str = PANEL, phyla: str = TIMING_PHYLA, batch: int = 200, limit: int = 0,
                  max_cpu_hours: float = 400.0, reports: str = "reports", dry_run: bool = False):
@@ -1569,8 +1579,9 @@ def annotate_all(panel: str = PANEL, phyla: str = TIMING_PHYLA, batch: int = 200
     print("Pfam-A:", prepare_pfam.remote())
 
     stats, errors, cpu_s, t0 = [], [], 0.0, time.time()
+    stats_path = f"{reports}/tables/pfam_annotation_stats.tsv"
     for i in range(0, len(accs), batch):
-        chunk = accs[i:i + batch]
+        chunk, n_before = accs[i:i + batch], len(stats)
         # order_outputs is on by default, so a raised exception is still paired with its accession by position;
         # the generator is drained before zipping so Modal's client never has to close a half-read one
         results = list(annotate_genome.map(chunk, return_exceptions=True))
@@ -1580,6 +1591,7 @@ def annotate_all(panel: str = PANEL, phyla: str = TIMING_PHYLA, batch: int = 200
                 cpu_s += r["cpu_s"]
             elif not (isinstance(r, dict) and r.get("cached")):
                 errors.append((acc, (r.get("error") if isinstance(r, dict) else repr(r)) or repr(r)))
+        _merge_anno_stats(stats_path, stats[n_before:])  # every batch, so an interrupted run keeps its timings
         print(f"  {min(i + batch, len(accs))}/{len(accs)} done; {len(stats)} annotated, {len(errors)} failed; "
               f"{cpu_s / 3600:.1f} CPU-h used, {time.time() - t0:.0f} s elapsed", flush=True)
         if i == 0 and len(errors) > len(chunk) // 2:
@@ -1588,14 +1600,6 @@ def annotate_all(panel: str = PANEL, phyla: str = TIMING_PHYLA, batch: int = 200
         if cpu_s / 3600 > max_cpu_hours:
             print(f"STOPPING: {cpu_s / 3600:.1f} CPU-h used exceeds --max-cpu-hours {max_cpu_hours}; re-run to resume")
             break
-
-    prior = {}
-    stats_path = f"{reports}/tables/pfam_annotation_stats.tsv"
-    if Path(stats_path).exists():  # merge with earlier (resumed) runs rather than overwrite them
-        with open(stats_path, newline="") as f:
-            prior = {r["acc"]: r for r in csv.DictReader(f, delimiter="\t")}
-    prior.update({r["acc"]: {c: r[c] for c in ANNO_STATS_COLS} for r in stats})
-    _write_tsv(stats_path, [prior[a] for a in sorted(prior)], ANNO_STATS_COLS)
 
     have_anno = _existing("annotations")
     n_ok = sum(f"{r['ncbi_assembly_accession']}.json" in have_anno for r in rows)
