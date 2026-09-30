@@ -911,3 +911,243 @@ def test_within_group_reliability_is_lower_when_between_group_variance_dominates
     assert rw == pytest.approx(1 / (1 + 9), abs=0.05)  # 1 / (1 + 3^2): within a phylum the signal is mostly noise at n=1
     assert rw < ro - 0.5 and within["within_groups"] and within["n_groups"] == k and not overall["within_groups"]
     assert within["systematic"][1]["reliability_ci"][0] <= rw <= within["systematic"][1]["reliability_ci"][1]
+
+
+# --- near-clade prediction ----------------------------------------------------------------------------
+def test_genus_folds_never_split_a_genus_and_balance_genome_counts():
+    np = pytest.importorskip("numpy")
+    rng = np.random.default_rng(0)
+    genera = np.array([f"g{int(k)}" for k in rng.zipf(1.6, 500) % 80])
+    f = core.genus_folds(genera, 5, 1)
+    for g in set(genera):
+        assert len(set(f[genera == g])) == 1  # every genome of a genus lands in one fold
+    sizes = np.bincount(f)
+    assert len(sizes) == 5 and sizes.max() - sizes.min() <= max(np.unique(genera, return_counts=True)[1])
+    assert (core.genus_folds(genera, 5, 1) == f).all()  # deterministic
+
+
+def test_genus_folds_caps_folds_at_the_number_of_genera():
+    assert core.genus_folds(["a", "a", "b"], 10, 0).max() == 1
+
+
+def test_taxon_prior_shrinks_down_the_ranks_and_ignores_unseen_taxa():
+    np = pytest.importorskip("numpy")
+    y = np.array([1, 1, 1, 0, 0, 0, 0, 0], dtype=bool)
+    tr = {"class": np.array(["C"] * 8), "order": np.array(["O1"] * 3 + ["O2"] * 5),
+          "family": np.array(["F1"] * 3 + ["F2"] * 5)}
+    te = {"class": np.array(["C", "C", "C"]), "order": np.array(["O1", "O2", "Onew"]), "family": np.array(["F1", "F2", "Fnew"])}
+    p = core.taxon_prior_scores(y, tr, te)
+    assert p[0] > 0.7 and p[1] < 0.15  # a family that is all motile vs one that is all non-motile
+    assert p[2] == pytest.approx(3 / 8, abs=1e-9)  # nothing known below the class: the class/phylum prior
+
+
+def test_nearest_rank_picks_the_lowest_shared_rank():
+    np = pytest.importorskip("numpy")
+    tr = {"family": np.array(["F1"]), "order": np.array(["O1"]), "class": np.array(["C1"])}
+    te = {"family": np.array(["F1", "F9", "F9", "F9"]), "order": np.array(["O1", "O1", "O9", "O9"]),
+          "class": np.array(["C1", "C1", "C1", "C9"])}
+    assert core.nearest_rank(tr, te).tolist() == [0, 1, 2, 3]
+
+
+def test_pool_bins_merges_small_far_bins_into_their_nearer_neighbour():
+    assert core.pool_bins([500, 300, 200, 100], [200, 120, 80, 40], 60, 15) == [[0], [1], [2], [3]]
+    assert core.pool_bins([500, 300, 20, 10], [200, 120, 8, 4], 60, 15) == [[0], [1, 2, 3]]
+    assert core.pool_bins([10, 300, 200, 100], [4, 100, 80, 40], 60, 15) == [[0, 1], [2], [3]]  # nearest merges outward
+    assert core.pool_bins([5, 5, 5, 5], [1, 1, 1, 1], 60, 15) == [[0, 1, 2, 3]]  # nothing sufficient -> one bin
+
+
+def test_genus_pair_counts_use_only_same_genus_pairs_and_skip_single_class_genera():
+    np = pytest.importorskip("numpy")
+    y = np.array([1, 0, 1, 0, 1, 1, 0])
+    s = np.array([.9, .1, .2, .8, .5, .6, .5])
+    g = np.array(["a", "a", "b", "b", "c", "c", "d"])
+    pc = core.genus_pair_counts(y, s, g)
+    assert pc == {"a": (1.0, 1), "b": (0.0, 1)}  # c is all-positive and d all-negative: undefined, dropped
+
+
+def _clade_data(seed=0, per_phylum=140, n_dims=30):
+    """4 phyla x ~14 families x ~10 genomes; the trait is inherited at family level, with the embedding tracking family."""
+    np = pytest.importorskip("numpy")
+    rng = np.random.default_rng(seed)
+    rows = []
+    for pi, ph in enumerate(["P1", "P2", "P3", "P4"]):
+        for fi in range(14):
+            fam_prev = rng.choice([0.05, 0.95])
+            centre = rng.normal(size=n_dims) * 2
+            order = f"{ph}_O{fi // 4}"
+            klass = f"{ph}_C{fi // 8}"
+            for gi in range(5):  # 5 genera per family, 2 genomes each
+                for _ in range(2):
+                    rows.append((ph, klass, order, f"{ph}_F{fi}", f"{ph}_F{fi}_G{gi}", rng.random() < fam_prev, centre))
+    ph, kl, orr, fam, gen, y, cen = zip(*rows)
+    X = np.stack([c + rng.normal(size=n_dims) for c in cen])
+    return ({"emb": X, "gc": rng.normal(size=(len(y), 1))}, np.array(y), np.array(ph), np.array(gen),
+            {"class": np.array(kl), "order": np.array(orr), "family": np.array(fam)})
+
+
+_NC_MODELS = {"evo2": {"features": "emb", "grid": [1e-2, 1e-1], "null": True},
+              "gc": {"features": "gc", "grid": [1.0], "null": True}}
+
+
+def test_near_clade_learns_family_level_inheritance_and_the_taxonomy_prior_matches_it():
+    pytest.importorskip("sklearn")
+    feats, y, ph, gen, tax = _clade_data()
+    r = core.near_clade_evaluate(feats, y, ph, gen, tax, _NC_MODELS, [("evo2", "gc"), ("evo2", "tax_prior")], n_splits=5,
+                                 n_perm=6, n_perm_order=6, n_boot=40, seed=1, n_jobs=2, min_bin_n=30, min_bin_class=8)
+    assert r["phyla"] == ["P1", "P2", "P3", "P4"] and set(r["models"]) == {"evo2", "gc", "tax_prior"}
+    for h in r["phyla"]:
+        m = r["per_phylum"][h]["models"]
+        assert m["evo2"]["pooled_auc"] > 0.75 and m["tax_prior"]["pooled_auc"] > 0.75  # inheritance is learnable near-clade
+        assert 0.3 < m["gc"]["pooled_auc"] < 0.7  # a feature with no signal stays near chance
+        gs = r["per_phylum"][h]["genus_stats"]
+        assert gs["n_genera"] == 70 and gs["single_genome"] == 0 and gs["scorable_both_classes"] <= gs["two_or_more"]
+        dc = r["per_phylum"][h]["distance_counts"]
+        assert sum(v["n"] for v in dc.values()) == r["per_phylum"][h]["n"]
+        assert dc["family"]["n"] > 0.9 * r["per_phylum"][h]["n"]  # 5 genera per family: the nearest relative is a family-mate
+    assert r["macro"]["deltas"]["evo2 - gc"]["ci"][0] > 0.2
+    assert r["bins"][0]["ranks"][0] == "family" and r["bins"][0]["macro"]["models"]["evo2"]["auc"] > 0.75
+    assert r["nulls"]["phylum"]["models"]["evo2"]["macro"]["mean"] == pytest.approx(0.5, abs=0.12)
+
+
+def test_within_order_null_is_a_stricter_test_than_the_within_phylum_null():
+    """Order-level inheritance beats a within-phylum shuffle but not one that preserves order prevalence."""
+    pytest.importorskip("sklearn")
+    feats, y, ph, gen, tax = _clade_data(seed=2)
+    r = core.near_clade_evaluate(feats, y, ph, gen, tax, _NC_MODELS, [], n_splits=5, n_perm=8, n_perm_order=8, n_boot=20,
+                                 seed=1, n_jobs=2, min_bin_n=30, min_bin_class=8)
+    a = r["nulls"]["phylum"]["models"]["tax_prior"]["macro"]["mean"]
+    b = r["nulls"]["order"]["models"]["tax_prior"]["macro"]["mean"]
+    assert b >= a - 0.02  # keeping order-level prevalence leaves more structure for the prior to find
+
+
+def test_near_clade_reports_undefined_genera_and_no_genus_leaks_across_folds():
+    pytest.importorskip("sklearn")
+    feats, y, ph, gen, tax = _clade_data(seed=3)
+    r = core.near_clade_evaluate(feats, y, ph, gen, tax, _NC_MODELS, [], n_splits=5, n_perm=0, n_perm_order=0, n_boot=10,
+                                 seed=1, n_jobs=1, min_bin_n=30, min_bin_class=8)
+    for h in r["phyla"]:
+        gs = r["per_phylum"][h]["genus_stats"]
+        assert gs["scorable_both_classes"] + gs["all_positive"] + gs["all_negative"] == gs["n_genera"]  # every genus is classified
+        assert r["nulls"] == {}  # both nulls skipped when their counts are zero
+
+
+# --- near-clade on the Modal side -----------------------------------------------------------------------
+def test_panel_families_logic(tmp_path, monkeypatch):
+    """GTDB family is used only where every shared rank agrees with the panel; disagreement/absence gives a unique placeholder."""
+    m = pytest.importorskip("modal") and __import__("src.evo2_modal", fromlist=["x"])
+    pan = [{"gtdb_accession": f"RS_GCF_{i}.1", "gtdb_phylum": "P", "gtdb_class": "C", "gtdb_order": "O", "gtdb_genus": f"Gen{i % 3}"} for i in range(6)]
+    path = tmp_path / "bac120_taxonomy.tsv.gz"
+    with gzip.open(path, "wt") as f:
+        for r in pan:
+            if r["gtdb_accession"] == "RS_GCF_5.1":
+                continue  # absent from the taxonomy file
+            genus = "Different" if r["gtdb_accession"] == "RS_GCF_2.1" else r["gtdb_genus"]  # a different GTDB release renamed it
+            f.write(f"{r['gtdb_accession']}\td__Bacteria;p__P;c__C;o__O;f__Fam{r['gtdb_genus']};g__{genus};s__x\n")
+    monkeypatch.setattr(m, "TAXONOMY_MIN_BYTES", 1)  # the real-file truncation guard is exercised separately
+    fam, rep = m._panel_families(pan, cache=str(path))
+    assert rep["missing"] == 1 and rep["rank_mismatch"] == 1
+    assert fam["RS_GCF_0.1"] == "FamGen0" and fam["RS_GCF_1.1"] == "FamGen1"
+    assert fam["RS_GCF_2.1"].startswith("?unknown:") and fam["RS_GCF_5.1"].startswith("?unknown:")
+    assert fam["RS_GCF_2.1"] != fam["RS_GCF_5.1"]  # each unknown is unique, so it can never match another genome's family
+
+
+def test_lopo_evaluate_tolerates_a_training_split_with_one_class():
+    """A rare target can leave an inner training split single-class; that must score as uninformative, not crash."""
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("sklearn")
+    rng = np.random.default_rng(0)
+    ph = np.repeat(["P1", "P2", "P3", "P4"], 30)
+    y = np.array([False] * 30 + [True] * 30 + [i % 2 == 0 for i in range(30)] + [i % 3 == 0 for i in range(30)])  # P1, P2 single-class
+    feats = {"emb": rng.normal(size=(120, 10))}
+    gen = np.array([f"g{i}" for i in range(120)])
+    r = core.lopo_evaluate(feats, y, ph, gen, {"m": {"features": "emb", "grid": [0.1, 1.0], "null": True}}, [], n_perm=2, n_boot=10, seed=1)
+    assert r["per_phylum"]["P3"]["models"]["m"]["auc"] == r["per_phylum"]["P3"]["models"]["m"]["auc"]  # a number, not a crash
+    assert r["per_phylum"]["P1"]["models"]["m"]["auc"] != r["per_phylum"]["P1"]["models"]["m"]["auc"]  # single-class phylum: AUC undefined (NaN)
+
+
+def _nc_rows(tmp_path, n=48):
+    rows = _lopo_rows(tmp_path, n=n)
+    for i, r in enumerate(rows):
+        r.update({"class": f"{r['phylum']}_C{i % 2}", "order": f"{r['phylum']}_O{i % 3}", "family": f"{r['phylum']}_F{i % 6}", "y": r["motility"] == "yes"})
+        r["genus"] = f"{r['phylum']}_G{(i // 4) % 6}"
+    return rows
+
+
+def test_nearclade_run_on_a_fake_volume_and_entrypoint_prints_every_section(tmp_path, monkeypatch, capsys):
+    pytest.importorskip("sklearn")
+    m = _patched(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "FEAT_DIR", str(tmp_path / "features"))
+    rows = _nc_rows(tmp_path)
+    m._seqfeat_batch([r["acc"] for r in rows], 10)
+    d = m._nearclade_run(rows, 10, 3, 2, 2, 8, 1)
+    assert d["n_genomes"] == 48 and d["phyla"] == ["P1", "P2", "P3", "P4"] and set(d["models"]) >= {"evo2", "gc", "tax_prior"}
+    assert d["per_phylum"]["P1"]["genus_stats"]["n_genera"] == 6
+    with pytest.raises(RuntimeError, match=r"0 of 48 genomes have both"):
+        m._nearclade_run(rows, 25, 3, 0, 0, 5, 1)  # depth 25 embeddings exist but no depth-25 features
+
+    _stub_volume_listing(monkeypatch, m, tmp_path)
+    monkeypatch.setattr(m, "seqfeat_batch", type("F", (), {"map": staticmethod(lambda b, kwargs=None: [m._seqfeat_batch(x, **kwargs) for x in b])})())
+    monkeypatch.setattr(m, "nearclade_run", type("F", (), {"remote": staticmethod(lambda r, n, k, p, po, nb, seed: m._nearclade_run(r, n, 3, 2, 2, 8, seed))})())
+    monkeypatch.setattr(m, "_panel_families", lambda pan, cache="": ({p["gtdb_accession"]: f"{p['gtdb_phylum']}_F{i % 6}" for i, p in enumerate(pan)}, {"genomes": len(pan), "missing": 0, "rank_mismatch": 0, "file": "x"}))
+    panel = tmp_path / "panel.tsv"
+    panel.write_text("ncbi_assembly_accession\tassembly_genbank\tgtdb_accession\tgtdb_phylum\tgtdb_class\tgtdb_order\tgtdb_genus\tmotility\n" + "".join(
+        f"{r['acc']}\t\tRS_{r['acc']}\t{r['phylum']}\t{r['class']}\t{r['order']}\t{r['genus']}\t{r['motility']}\n" for r in rows))
+    m.nearclade.info.raw_f(panel=str(panel), phyla="P1,P2,P3,P4", n_windows=10, n_splits=3, n_perm=2, n_perm_order=2, n_boot=8, reports=str(tmp_path / "rep"))
+    out = capsys.readouterr().out
+    for needle in ("GTDB taxonomy (family)", "NEAR-CLADE: motility", "HELD-OUT GENUS STRUCTURE", "both classes", "NEAREST TRAINING RELATIVE",
+                   "PER-PHYLUM AUC: NEAR-CLADE", "within-genus AUC", "DECAY CURVE", "PAIRED DIFFERENCES", "evo2 - tax_prior",
+                   "SHUFFLE NULLS", "within each ORDER", "VERDICT", "Evo 2 vs GC content", "Evo 2 vs taxonomy prior"):
+        assert needle in out, needle
+    assert (tmp_path / "rep" / "tables" / "evo2_nearclade_motility.json").exists()
+
+
+def test_lopo_target_option_changes_the_label_and_the_output_file(tmp_path, monkeypatch, capsys):
+    pytest.importorskip("sklearn")
+    m = _patched(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "FEAT_DIR", str(tmp_path / "features"))
+    rows = _lopo_rows(tmp_path)
+    _stub_volume_listing(monkeypatch, m, tmp_path)
+    monkeypatch.setattr(m, "seqfeat_batch", type("F", (), {"map": staticmethod(lambda b, kwargs=None: [m._seqfeat_batch(x, **kwargs) for x in b])})())
+    seen = {}
+    monkeypatch.setattr(m, "lopo_run", type("F", (), {"remote": staticmethod(lambda r, n, npm, nb, seed: (seen.setdefault("rows", r), m._lopo_run(r, n, 2, 20, seed))[1])})())
+    panel = tmp_path / "panel.tsv"
+    panel.write_text("ncbi_assembly_accession\tassembly_genbank\tgtdb_phylum\tgtdb_genus\tmotility\toxygen\tshape\n" + "".join(
+        f"{r['acc']}\t\t{r['phylum']}\t{r['genus']}\t{r['motility']}\t{'aerobe' if (i // 4) % 2 else 'anaerobe'}\t{'rod' if i % 3 else 'coccus'}\n" for i, r in enumerate(rows)))
+    m.lopo.info.raw_f(panel=str(panel), phyla="P1,P2,P3,P4", n_windows=10, n_perm=2, n_boot=20, batch=12, reports=str(tmp_path / "rep"), target="oxygen_aerobe")
+    out = capsys.readouterr().out
+    assert "OXYGEN_AEROBE (oxygen = aerobe vs rest)" in out
+    assert (tmp_path / "rep" / "tables" / "evo2_lopo_oxygen_aerobe.json").exists()
+    assert [r["y"] for r in seen["rows"]] == [(i // 4) % 2 == 1 for i in range(len(rows))]  # the label follows the target, not motility
+    with pytest.raises(SystemExit, match="--target must be one of"):
+        m.lopo.info.raw_f(panel=str(panel), target="nonsense", reports=str(tmp_path / "rep"))
+
+
+def test_pooled_auc_of_an_uninformative_feature_is_not_biased_below_chance():
+    """Regression: fold intercepts track training prevalence, which anti-correlates with the held-out fold's prevalence."""
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("sklearn")
+    means, nulls = [], []
+    for seed in range(4):
+        feats, y, ph, gen, tax = _clade_data(seed=10 + seed)
+        r = core.near_clade_evaluate(feats, y, ph, gen, tax, {"gc": _NC_MODELS["gc"]}, [], n_splits=5, n_perm=6, n_perm_order=0,
+                                     n_boot=10, seed=seed, n_jobs=2, min_bin_n=30, min_bin_class=8)
+        means.append(r["macro"]["models"]["gc"]["pooled_auc"])
+        nulls.append(r["nulls"]["phylum"]["models"]["gc"]["macro"]["mean"])
+    assert np.mean(means) == pytest.approx(0.5, abs=0.06) and np.mean(nulls) == pytest.approx(0.5, abs=0.05)
+    # the taxonomy prior is centred on the fold's base rate; its within-phylum null is also at chance
+    assert r["nulls"]["phylum"]["models"]["tax_prior"]["macro"]["mean"] == pytest.approx(0.5, abs=0.08)
+
+
+def test_lr_scores_are_intercept_free_and_leave_within_fold_auc_unchanged():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("sklearn")
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(200, 5))
+    y = (X[:, 0] + rng.normal(size=200) > 0.5)
+    Xt = rng.normal(size=(60, 5))
+    model = core._pipeline(0.1).fit(X, y)
+    raw = model.decision_function(Xt)
+    s = core._lr_scores(X, y, Xt, 0.1)
+    assert np.allclose(raw - s, model[-1].intercept_[0])  # only a constant was removed
+    yt = rng.random(60) < 0.5
+    assert core.manual_auc(yt, raw) == core.manual_auc(yt, s)  # a constant shift cannot change an AUC within one fold

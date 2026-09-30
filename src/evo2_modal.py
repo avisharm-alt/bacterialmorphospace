@@ -92,6 +92,9 @@ app = modal.App("evo2-embed")
 
 PANEL = "data/final/core_panel_species.tsv"
 SELECTED_DEPTH_JSON = "reports/tables/evo2_sweep_selected_depth.json"
+# binary prediction targets: name -> (panel column, positive class)
+TARGETS = {"motility": ("motility", "yes"), "oxygen_aerobe": ("oxygen", "aerobe"),
+           "oxygen_facultative": ("oxygen", "facultative"), "shape_rod": ("shape", "rod")}
 UA = "bacterialmorphospace/0.1 (research; genome download)"
 
 
@@ -640,7 +643,7 @@ def _lopo_run(rows: list[dict], n_windows: int, n_perm: int, n_boot: int, seed: 
                 "kmer_genome": np.stack([core.tetra_frequencies(f[0]) for f in sf]),
                 "kmer_windows": np.stack([core.tetra_frequencies(f[1]) for f in sf]),
                 "gc": np.array([[core.gc_from_counts(f[0])] for f in sf])}
-    y = np.array([r["motility"] == "yes" for r in ok])
+    y = np.array([r["y"] if "y" in r else r["motility"] == "yes" for r in ok])
     grid = list(core.LOPO_C_GRID)
     models = {"evo2": {"features": "evo2", "grid": grid, "null": True},
               "kmer_genome": {"features": "kmer_genome", "grid": grid, "null": True},
@@ -655,6 +658,39 @@ def _lopo_run(rows: list[dict], n_windows: int, n_perm: int, n_boot: int, seed: 
     res.update({"n_genomes": len(ok), "n_requested": len(rows), "missing": [r["acc"] for r in rows if r not in ok],
                 "median_fraction_of_genome_seen_by_evo2": float(np.median(seen)),
                 "median_genome_mb": float(np.median(sf[:, 0, 256:].sum(1)) / 1e6), "n_windows": n_windows})
+    return res
+
+
+@app.function(image=cpu_image, volumes={OUT_DIR: out_vol}, timeout=14400, cpu=8, memory=16384)
+def nearclade_run(rows: list[dict], n_windows: int, n_splits: int, n_perm: int, n_perm_order: int, n_boot: int, seed: int) -> dict:
+    return _plain_call(_nearclade_run, rows, n_windows, n_splits, n_perm, n_perm_order, n_boot, seed)
+
+
+def _nearclade_run(rows: list[dict], n_windows: int, n_splits: int, n_perm: int, n_perm_order: int, n_boot: int, seed: int) -> dict:
+    """Leave-genus-out inside each phylum on the saved depth-N embeddings, AUC overall and by distance to the nearest training genome."""
+    import numpy as np
+    from threadpoolctl import threadpool_limits
+
+    out_vol.reload()
+    ok = [r for r in rows if os.path.exists(f"{EMB_DIR}/{r['acc']}__n{n_windows}.npy")
+          and os.path.exists(f"{FEAT_DIR}/{r['acc']}__seqfeat_n{n_windows}.npy")]
+    if not rows or len(ok) < 0.98 * len(rows):
+        raise RuntimeError(f"{len(ok)} of {len(rows)} genomes have both a depth-{n_windows} embedding and sequence features (need >= 98%)")
+    emb = np.stack([np.load(f"{EMB_DIR}/{r['acc']}__n{n_windows}.npy") for r in ok])
+    sf = np.stack([np.load(f"{FEAT_DIR}/{r['acc']}__seqfeat_n{n_windows}.npy") for r in ok])
+    features = {"evo2": emb, "kmer_genome": np.stack([core.tetra_frequencies(f[0]) for f in sf]),
+                "kmer_windows": np.stack([core.tetra_frequencies(f[1]) for f in sf]),
+                "gc": np.array([[core.gc_from_counts(f[0])] for f in sf])}
+    grid = list(core.LOPO_C_GRID)
+    models = {k: {"features": k, "grid": grid, "null": True} for k in features}
+    compare = [("evo2", "kmer_genome"), ("evo2", "kmer_windows"), ("evo2", "gc"), ("evo2", "tax_prior")]
+    with threadpool_limits(limits=1):
+        res = core.near_clade_evaluate(
+            features, np.array([r["y"] for r in ok]), [r["phylum"] for r in ok], [r["genus"] for r in ok],
+            {"family": [r["family"] for r in ok], "order": [r["order"] for r in ok], "class": [r["class"] for r in ok]},
+            models, compare, n_splits=n_splits, n_perm=n_perm, n_perm_order=n_perm_order, n_boot=n_boot, seed=seed, n_jobs=8)
+    res.update({"n_genomes": len(ok), "n_requested": len(rows), "n_windows": n_windows,
+                "median_fraction_of_genome_seen_by_evo2": float(np.median(sf[:, 1, 256:].sum(1) / sf[:, 0, 256:].sum(1)))})
     return res
 
 
@@ -1065,12 +1101,20 @@ def _ci(x: dict) -> str:
 
 @app.local_entrypoint()
 def lopo(panel: str = PANEL, phyla: str = "Pseudomonadota,Bacillota,Actinomycetota,Bacteroidota", n_windows: int = 10,
-         n_perm: int = 50, n_boot: int = 1000, seed: int = 20260929, batch: int = 40, reports: str = "reports"):
-    """Motility, leave-one-phylum-out, AUC scored WITHIN the held-out phylum: Evo 2 vs composition baselines. CPU only."""
+         n_perm: int = 50, n_boot: int = 1000, seed: int = 20260929, batch: int = 40, reports: str = "reports",
+         target: str = "motility"):
+    """Leave-one-phylum-out, AUC scored WITHIN the held-out phylum: Evo 2 vs composition baselines. CPU only.
+
+    --target is one of motility, oxygen_aerobe, oxygen_facultative, shape_rod (positive class vs the rest).
+    """
     import json
 
+    if target not in TARGETS:
+        raise SystemExit(f"--target must be one of {sorted(TARGETS)}")
+    col, pos = TARGETS[target]
     keep = [x.strip() for x in phyla.split(",") if x.strip()]
-    rows = [{"acc": r["ncbi_assembly_accession"], "phylum": r["gtdb_phylum"], "genus": r["gtdb_genus"], "motility": r["motility"]}
+    rows = [{"acc": r["ncbi_assembly_accession"], "phylum": r["gtdb_phylum"], "genus": r["gtdb_genus"],
+             "motility": r["motility"], "y": r[col] == pos}
             for r in _read_panel(panel) if r["gtdb_phylum"] in keep]
     have = _existing("embeddings")
     emb = [r for r in rows if f"{r['acc']}__n{n_windows}.npy" in have and f"{r['acc']}__meta.json" in have]
@@ -1090,10 +1134,10 @@ def lopo(panel: str = PANEL, phyla: str = "Pseudomonadota,Bacillota,Actinomyceto
     print(f"evaluating (leave-one-phylum-out, {n_perm} shuffles, {n_boot} genus-cluster bootstraps)...")
     d = lopo_run.remote(emb, n_windows, n_perm, n_boot, seed)
     Path(f"{reports}/tables").mkdir(parents=True, exist_ok=True)
-    Path(f"{reports}/tables/evo2_lopo_motility.json").write_text(json.dumps(d, indent=2, sort_keys=True) + "\n")
+    Path(f"{reports}/tables/evo2_lopo_{target}.json").write_text(json.dumps(d, indent=2, sort_keys=True) + "\n")
 
     names = {"evo2": "Evo 2", "kmer_genome": "k-mer(genome)", "kmer_windows": "k-mer(windows)", "gc": "GC only"}
-    print(f"\n=== MOTILITY, LEAVE-ONE-PHYLUM-OUT: {d['n_genomes']} of {d['n_requested']} genomes, depth {d['n_windows']} ===")
+    print(f"\n=== {target.upper()} ({col} = {pos} vs rest), LEAVE-ONE-PHYLUM-OUT: {d['n_genomes']} of {d['n_requested']} genomes, depth {d['n_windows']} ===")
     print(f"  AUC is scored WITHIN the held-out phylum, trained on the other {len(d['phyla']) - 1}. Brackets: 95% genus-cluster bootstrap CI.")
     print(f"  Evo 2 saw {d['median_fraction_of_genome_seen_by_evo2']:.1%} of a median {d['median_genome_mb']:.1f} Mb genome; "
           "k-mer(genome) sees all of it, k-mer(windows) sees only the windows Evo 2 saw.")
@@ -1139,4 +1183,201 @@ def lopo(panel: str = PANEL, phyla: str = "Pseudomonadota,Bacillota,Actinomyceto
         verdict = "no detectable difference between Evo 2 and whole-genome tetranucleotide frequencies (the CI spans zero)"
     print(f"\n  VERDICT vs k-mer(genome): {verdict}. Macro ΔAUC {m['delta']:+.3f} [{m['ci'][0]:+.3f},{m['ci'][1]:+.3f}]; "
           f"Evo 2 clearly ahead in {wins}/{len(d['phyla'])} phyla, clearly behind in {losses}/{len(d['phyla'])}.")
-    print(f"\nsaved {reports}/tables/evo2_lopo_motility.json  (CPU only, no GPU spend)")
+    print(f"\nsaved {reports}/tables/evo2_lopo_{target}.json  (CPU only, no GPU spend)")
+
+
+TAXONOMY_URL = "https://data.gtdb.ecogenomic.org/releases/latest/bac120_taxonomy.tsv.gz"
+TAXONOMY_MIN_BYTES = 5_000_000  # the real file is ~10 MB; anything smaller is a truncated download
+
+
+def _panel_families(pan: list[dict], cache: str = "data/raw/gtdb/bac120_taxonomy.tsv.gz") -> tuple[dict, dict]:
+    """{GTDB accession: family} from GTDB's small taxonomy file (cached under data/raw/gtdb like the other GTDB files).
+
+    The panel has genus/order/class/phylum but no family. A genome's family is used only if the taxonomy file agrees with
+    the panel on all four of those ranks (guards against the file being a different GTDB release); otherwise it gets a
+    unique placeholder, so it can match nothing. Returns (families, report).
+    """
+    import gzip
+    import urllib.request
+
+    path = Path(cache)
+    if not path.exists() or path.stat().st_size < TAXONOMY_MIN_BYTES:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".part")
+        with urllib.request.urlopen(TAXONOMY_URL, timeout=300) as resp, open(tmp, "wb") as f:
+            while block := resp.read(1 << 20):
+                f.write(block)
+        if tmp.stat().st_size < TAXONOMY_MIN_BYTES:
+            tmp.unlink()
+            raise SystemExit(f"GTDB taxonomy download looks truncated (< {TAXONOMY_MIN_BYTES} bytes); not using it")
+        tmp.replace(path)
+    tax = {}
+    with gzip.open(path, "rt") as f:
+        for line in f:
+            acc, t = line.rstrip("\n").split("\t")
+            tax[acc] = dict(x.split("__", 1) for x in t.split(";"))
+    fam, mismatch, missing = {}, 0, 0
+    for r in pan:
+        a = r["gtdb_accession"]
+        t = tax.get(a)
+        if t is None:
+            missing += 1
+        elif (t["g"], t["o"], t["c"], t["p"]) == (r["gtdb_genus"], r["gtdb_order"], r["gtdb_class"], r["gtdb_phylum"]) and t["f"]:
+            fam[a] = t["f"]
+            continue
+        else:
+            mismatch += 1
+        fam[a] = f"?unknown:{a}"
+    return fam, {"genomes": len(pan), "missing": missing, "rank_mismatch": mismatch, "file": str(path)}
+
+
+def _rank_row(d: dict, fmt) -> str:
+    return " | ".join(fmt(k) for k in d)
+
+
+@app.local_entrypoint()
+def nearclade(panel: str = PANEL, phyla: str = "Pseudomonadota,Bacillota,Actinomycetota,Bacteroidota", n_windows: int = 10,
+              target: str = "motility", n_splits: int = 10, n_perm: int = 50, n_perm_order: int = 30, n_boot: int = 200,
+              seed: int = 20260929, batch: int = 40, reports: str = "reports"):
+    """Near-clade prediction: leave-genus-out within each phylum, AUC by taxonomic distance to the nearest training genome. CPU only."""
+    import json
+
+    if target not in TARGETS:
+        raise SystemExit(f"--target must be one of {sorted(TARGETS)}")
+    col, pos = TARGETS[target]
+    keep = [x.strip() for x in phyla.split(",") if x.strip()]
+    pan = [r for r in _read_panel(panel) if r["gtdb_phylum"] in keep]
+    fam, frep = _panel_families(pan)
+    print(f"GTDB taxonomy (family) for {frep['genomes']} genomes: {frep['missing']} missing, {frep['rank_mismatch']} disagree with the panel on genus/order/class/phylum")
+    rows = [{"acc": r["ncbi_assembly_accession"], "phylum": r["gtdb_phylum"], "class": r["gtdb_class"], "order": r["gtdb_order"],
+             "family": fam[r["gtdb_accession"]], "genus": r["gtdb_genus"], "y": r[col] == pos} for r in pan]
+    have = _existing("embeddings")
+    emb = [r for r in rows if f"{r['acc']}__n{n_windows}.npy" in have and f"{r['acc']}__meta.json" in have]
+    print(f"{len(emb)} of {len(rows)} genomes have a depth-{n_windows} embedding on the volume")
+    if len(emb) < 0.98 * len(rows):
+        raise SystemExit(f"Need >= 98% embedded. Run: modal run -m src.evo2_modal::embed_all --n-windows {n_windows} --phyla {','.join(keep)}")
+    feats_have = _existing("features")
+    todo = [r["acc"] for r in emb if f"{r['acc']}__seqfeat_n{n_windows}.npy" not in feats_have]
+    print(f"sequence features: {len(emb) - len(todo)} cached, {len(todo)} to compute (CPU)")
+    for res in seqfeat_batch.map([todo[i:i + batch] for i in range(0, len(todo), batch)], kwargs={"n_windows": n_windows}) if todo else []:
+        for e in res["errors"]:
+            print("  feature extraction failed:", e[0])
+
+    print(f"leave-genus-out within phylum ({n_splits} genus-grouped folds), {n_perm}+{n_perm_order} shuffles, {n_boot} bootstraps ...")
+    d = nearclade_run.remote(emb, n_windows, n_splits, n_perm, n_perm_order, n_boot, seed)
+    Path(f"{reports}/tables").mkdir(parents=True, exist_ok=True)
+    Path(f"{reports}/tables/evo2_nearclade_{target}.json").write_text(json.dumps(d, indent=2, sort_keys=True) + "\n")
+    _print_nearclade(d, target, col, pos, f"{reports}/tables/evo2_lopo_{target}.json")
+    print(f"\nsaved {reports}/tables/evo2_nearclade_{target}.json  (CPU only, no GPU spend)")
+
+
+def _a(x: dict, key: str = "auc", ci: str = "ci") -> str:
+    return f"{x[key]:.3f} [{x[ci][0]:.2f},{x[ci][1]:.2f}]"
+
+
+def _print_nearclade(d: dict, target: str, col: str, pos: str, lopo_path: str) -> None:
+    import json
+
+    P = d["phyla"]
+    M = ["evo2", "kmer_genome", "kmer_windows", "gc", "tax_prior"]
+    nm = {"evo2": "Evo 2", "kmer_genome": "k-mer(genome)", "kmer_windows": "k-mer(windows)", "gc": "GC only", "tax_prior": "tax-prior*"}
+    print(f"\n=== NEAR-CLADE: {target} ({col} = {pos} vs rest), leave-genus-out within phylum, depth {d['n_windows']}, {d['n_genomes']} of {d['n_requested']} genomes ===")
+    print(f"  Genera never span train and test ({d['n_splits']} genus-grouped folds per phylum); each model trains on the OTHER genera of the same phylum.")
+    print("  *tax-prior is an extra baseline: trait prevalence among training genomes in the nearest shared taxon (family > order > class > phylum).")
+    print("  Floor (constant score) has AUC exactly 0.500. Brackets: 95% genus-cluster bootstrap CI.")
+
+    print("\n  1. HELD-OUT GENUS STRUCTURE (AUC needs both classes inside the group scored)")
+    print(f"  {'phylum':<16} {'genomes':>7} {'genera':>6} {'1 genome':>8} {'>=2':>5} {'both classes':>12} {'all +':>6} {'all -':>6} {'genomes in scorable genera':>27}")
+    for h in P:
+        e = d["per_phylum"][h]; g = e["genus_stats"]
+        print(f"  {h:<16} {e['n']:>7} {g['n_genera']:>6} {g['single_genome']:>8} {g['two_or_more']:>5} {g['scorable_both_classes']:>12} {g['all_positive']:>6} {g['all_negative']:>6} "
+              f"{g['genomes_in_scorable']:>15} ({g['genomes_in_scorable'] / e['n']:.0%})")
+    print("  Within-genus AUC uses only same-genus pairs, so it exists only for the 'both classes' genera. The pooled AUC below uses every held-out genome.")
+
+    print("\n  2. HOW CLOSE IS THE NEAREST TRAINING RELATIVE? (lowest rank shared with any training genome; positives in brackets)")
+    print(f"  {'phylum':<16} " + " ".join(f"{NC_LABELS_[r]:>16}" for r in core.NC_RANKS))
+    for h in P:
+        dc = d["per_phylum"][h]["distance_counts"]
+        print(f"  {h:<16} " + " ".join(f"{dc[r]['n']:>9} ({dc[r]['n_positive']:>4})" for r in core.NC_RANKS))
+
+    lopo = None
+    if Path(lopo_path).exists():
+        lopo = json.load(open(lopo_path))
+    print("\n  3. PER-PHYLUM AUC: NEAR-CLADE (leave-genus-out, pooled) vs OUT-OF-CLADE (leave-phylum-out, from the earlier run)")
+    print(f"  {'phylum':<16} | " + " | ".join(f"{nm[m]:^19}" for m in M) + " | floor" + ("  ||  out-of-clade: Evo 2 / k-mer(g) / GC" if lopo else ""))
+    for h in P:
+        m = d["per_phylum"][h]["models"]
+        tail = ""
+        if lopo and h in lopo["per_phylum"]:
+            lm = lopo["per_phylum"][h]["models"]
+            tail = f"  ||  {lm['evo2']['auc']:.3f} / {lm['kmer_genome']['auc']:.3f} / {lm['gc']['auc']:.3f}"
+        print(f"  {h:<16} | " + " | ".join(f"{_a(m[k], 'pooled_auc', 'pooled_ci'):^19}" for k in M) + " | 0.500" + tail)
+    mm = d["macro"]["models"]
+    tail = ""
+    if lopo:
+        lm = lopo["macro"]["models"]
+        tail = f"  ||  {lm['evo2']['auc']:.3f} / {lm['kmer_genome']['auc']:.3f} / {lm['gc']['auc']:.3f}"
+    print(f"  {'MACRO MEAN':<16} | " + " | ".join(f"{_a(mm[k], 'pooled_auc', 'pooled_ci'):^19}" for k in M) + " | 0.500" + tail)
+    print("  within-genus AUC (same-genus pairs only; genera scored in brackets):")
+    for h in P:
+        e = d["per_phylum"][h]
+        if "within_genus_scored" in e:
+            ws = e["within_genus_scored"]
+            print(f"    {h:<16} ({ws['n_genera']:>3} genera, {ws['n_pairs']:>5} pairs) " + " | ".join(f"{nm[k]} {_a(e['models'][k]['within_genus'])}" for k in M))
+        else:
+            print(f"    {h:<16} no genus holds both classes")
+
+    print("\n  4. DECAY CURVE: pooled AUC by taxonomic distance to the nearest TRAINING genome")
+    br = d["bin_rule"]
+    print(f"  Bins are merged until each holds >= {br['min_n']} genomes and >= {br['min_each_class']} of each class (over all phyla); a phylum's cell is scored only if it meets that itself.")
+    for b in d["bins"]:
+        print(f"\n  [{b['label']}]")
+        print(f"  {'phylum':<16} {'n':>5} {'pos':>4} {'genera':>6} | " + " | ".join(f"{nm[k]:^19}" for k in M))
+        for h in P:
+            c = b["phyla"][h]
+            if c["sufficient"]:
+                print(f"  {h:<16} {c['n']:>5} {c['n_positive']:>4} {c['n_genera']:>6} | " + " | ".join(f"{_a(c['models'][k]):^19}" for k in M))
+            else:
+                print(f"  {h:<16} {c['n']:>5} {c['n_positive']:>4} {c['n_genera']:>6} | too few genomes or too few of one class to score")
+        if b["macro"]:
+            print(f"  {'MACRO (' + str(b['macro']['n_phyla']) + ' phyla)':<16} {'':>5} {'':>4} {'':>6} | " + " | ".join(f"{_a(b['macro']['models'][k]):^19}" for k in M))
+            dl = b["macro"]["deltas"]
+            print("  Evo 2 minus: " + "; ".join(f"{k.split(' - ')[1]} {v['delta']:+.3f} [{v['ci'][0]:+.3f},{v['ci'][1]:+.3f}]" for k, v in dl.items()))
+
+    print("\n  5. PAIRED DIFFERENCES, pooled leave-genus-out AUC (Evo 2 minus baseline; same genera resampled; 95% CI)")
+    for pair in ("evo2 - gc", "evo2 - kmer_genome", "evo2 - kmer_windows", "evo2 - tax_prior"):
+        cells = []
+        for h in P:
+            x = d["per_phylum"][h]["deltas"][pair]
+            cells.append(f"{h[:6]} {x['delta']:+.3f} [{x['ci'][0]:+.3f},{x['ci'][1]:+.3f}]")
+        x = d["macro"]["deltas"][pair]
+        print(f"  {pair:<20} " + " | ".join(cells) + f" || MACRO {x['delta']:+.3f} [{x['ci'][0]:+.3f},{x['ci'][1]:+.3f}]")
+
+    print("\n  6. SHUFFLE NULLS (mean ± sd of the null pooled AUC; p = P(null >= observed))")
+    for mode, title in (("phylum", "labels permuted within each phylum"), ("order", "labels permuted within each ORDER (order-level prevalence kept: signal beyond the order?)")):
+        if mode not in d["nulls"]:
+            continue
+        nl = d["nulls"][mode]
+        print(f"  {title}  [{nl['n_perm']} permutations]")
+        for k in M:
+            if k not in nl["models"]:
+                continue
+            r = nl["models"][k]
+            print(f"    {nm[k]:<15} " + " | ".join(f"{h[:6]} {r['phyla'][h]['mean']:.3f}±{r['phyla'][h]['sd']:.3f} p={r['phyla'][h]['p']:.3f}" for h in P) +
+                  f" || MACRO {r['macro']['mean']:.3f}±{r['macro']['sd']:.3f} p={r['macro']['p']:.3f}")
+
+    g = d["macro"]["deltas"]["evo2 - gc"]
+    tp = d["macro"]["deltas"]["evo2 - tax_prior"]
+    kg = d["macro"]["deltas"]["evo2 - kmer_genome"]
+    say = lambda x, a, b: (f"{a} is ahead of {b}" if x["ci"][0] > 0 else f"{b} is ahead of {a}" if x["ci"][1] < 0 else f"no detectable difference between {a} and {b}")  # noqa: E731
+    print("\n  VERDICT (macro over the four phyla, pooled leave-genus-out AUC)")
+    print(f"    Evo 2 vs GC content:        {say(g, 'Evo 2', 'GC')} (Δ {g['delta']:+.3f} [{g['ci'][0]:+.3f},{g['ci'][1]:+.3f}])")
+    print(f"    Evo 2 vs k-mer(genome):     {say(kg, 'Evo 2', 'k-mer(genome)')} (Δ {kg['delta']:+.3f} [{kg['ci'][0]:+.3f},{kg['ci'][1]:+.3f}])")
+    print(f"    Evo 2 vs taxonomy prior:    {say(tp, 'Evo 2', 'the taxonomy prior')} (Δ {tp['delta']:+.3f} [{tp['ci'][0]:+.3f},{tp['ci'][1]:+.3f}])")
+    ev = [b for b in d["bins"] if b["macro"]]
+    if len(ev) > 1:
+        print("    Evo 2 macro AUC from nearest to farthest bin: " + " -> ".join(f"{b['label']}: {b['macro']['models']['evo2']['auc']:.3f}" for b in ev))
+        print("    Taxonomy prior, same bins:                    " + " -> ".join(f"{b['label']}: {b['macro']['models']['tax_prior']['auc']:.3f}" for b in ev))
+
+
+NC_LABELS_ = {"family": "same family", "order": "same order", "class": "same class", "phylum": "phylum only"}

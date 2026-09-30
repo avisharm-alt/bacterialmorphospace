@@ -281,6 +281,31 @@ differences are paired on the same resamples, and the shuffle null permutes labe
 `reliability --within-phylum` repeats the depth study centred within phylum: ordinary reliability is dominated by
 between-phylum differences, but a within-phylum comparison depends on the much smaller differences among genomes of one phylum.
 
+### Other traits and near-clade prediction (CPU only, existing depth-10 embeddings)
+
+```bash
+# leave-one-phylum-out for another target: motility (default), oxygen_aerobe, oxygen_facultative, shape_rod
+modal run -m src.evo2_modal::lopo --target oxygen_aerobe --n-boot 200
+
+# near-clade: leave-genus-out inside each phylum, AUC by taxonomic distance to the nearest training genome
+modal run -m src.evo2_modal::nearclade --target motility --n-boot 200
+```
+
+`nearclade` puts genera into 10 folds per phylum (a genus is never in both train and test) and trains each model on
+the other genera of the same phylum, with `C` tuned by an inner genus-grouped CV. For each held-out genome it records the
+lowest taxonomic rank (family, order, class, phylum) it shares with any training genome, and reports pooled AUC by that
+distance. Family comes from GTDB's `bac120_taxonomy.tsv.gz`, cached in `data/raw/gtdb/`; it is used only where the file
+agrees with the panel on genus, order, class and phylum. Distance bins are merged until each holds enough genomes of both
+classes, and a phylum's cell is scored only if it meets that rule itself. Also reported: how many genera can be scored at
+all (both classes present), a within-genus AUC from same-genus pairs only, the trivial floor (0.5), a taxonomy-prior
+baseline (trait prevalence in the nearest shared taxon of the training genomes), and shuffle nulls that permute labels
+within each phylum and within each order (order-level prevalence kept).
+
+Pooled scores use intercept-free decision values. A fold's intercept just encodes its training prevalence, which shifts
+between folds and, once folds are pooled, biases the AUC of an uninformative feature below 0.5 (0.40 in a simulation
+against 0.48 after the fix). Within one fold or phylum a constant offset changes no AUC, so the earlier
+leave-one-phylum-out numbers are unaffected.
+
 ## Layout
 
 ```

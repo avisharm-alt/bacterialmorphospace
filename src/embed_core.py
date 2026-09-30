@@ -866,7 +866,14 @@ LOPO_C_GRID = (1e-4, 1e-3, 1e-2, 1e-1, 1.0)
 
 
 def _lr_scores(X_tr, y_tr, X_te, C):
-    return _pipeline(C).fit(X_tr, y_tr).decision_function(X_te)
+    """Decision scores WITHOUT the intercept.
+
+    The intercept only encodes the training prevalence, which is a constant within one fold but shifts between folds
+    (a fold that holds out many positives trains on fewer). Pooling such scores makes the shift anti-correlated with the
+    labels and biases pooled AUC below 0.5. Within one fold a constant changes no AUC, so nothing else is affected.
+    """
+    model = _pipeline(C).fit(X_tr, y_tr)
+    return model.decision_function(X_te) - float(model[-1].intercept_[0])
 
 
 def _auc_or_nan(y, s) -> float:
@@ -935,7 +942,7 @@ def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list,
                         tasks.append((name, h, t, C, tr, idx[t]))
     def inner(name, h, t, C, tr, te):
         X = features[models[name]["features"]]
-        return name, h, C, _auc_or_nan(y[te], _lr_scores(X[tr], y[tr], X[te], C))
+        return name, h, C, _auc_or_nan(y[te], _lr_scores_safe(X[tr], y[tr], X[te], C))
     got = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(inner)(*t) for t in tasks)
     inner_auc: dict = {}
     for name, h, C, a in got:
@@ -952,7 +959,7 @@ def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list,
     def outer(name, h):
         X = features[models[name]["features"]]
         tr = rows_of([g for g in order if g != h])
-        return (name, h), _lr_scores(X[tr], y[tr], X[idx[h]], chosen[(name, h)])
+        return (name, h), _lr_scores_safe(X[tr], y[tr], X[idx[h]], chosen[(name, h)])
     scores = dict(Parallel(n_jobs=n_jobs, prefer="threads")(delayed(outer)(n, h) for n in models for h in order))
 
     # 3. cluster bootstrap, paired across models
@@ -973,16 +980,24 @@ def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list,
             k = min(len(boots[h][a_]), len(boots[h][b_]))
             d = boots[h][a_][:k] - boots[h][b_][:k]
             per[h]["deltas"][f"{a_} - {b_}"] = {"delta": per[h]["models"][a_]["auc"] - per[h]["models"][b_]["auc"],
-                                                 "ci": [float(np.quantile(d, .025)), float(np.quantile(d, .975))],
-                                                 "share_boot_positive": float((d > 0).mean())}
-    macro = {"models": {}, "deltas": {}}
-    kmin = min(len(boots[h][n]) for h in order for n in models)
+                                                 "ci": [float(np.quantile(d, .025)), float(np.quantile(d, .975))] if k else [float("nan")] * 2,
+                                                 "share_boot_positive": float((d > 0).mean()) if k else float("nan")}
+    # phyla whose held-out AUC is undefined (a single-class phylum) are left out of the macro average
+    usable = [h for h in order if all(len(boots[h][n]) > 0 for n in models)]
+    macro = {"models": {}, "deltas": {}, "phyla_used": usable}
+    kmin = min((len(boots[h][n]) for h in usable for n in models), default=0)
     for n in models:
-        m = np.mean([boots[h][n][:kmin] for h in order], axis=0)
-        macro["models"][n] = {"auc": float(np.mean([per[h]["models"][n]["auc"] for h in order])),
+        if not usable:
+            macro["models"][n] = {"auc": float("nan"), "ci": [float("nan")] * 2}
+            continue
+        m = np.mean([boots[h][n][:kmin] for h in usable], axis=0)
+        macro["models"][n] = {"auc": float(np.mean([per[h]["models"][n]["auc"] for h in usable])),
                               "ci": [float(np.quantile(m, .025)), float(np.quantile(m, .975))]}
     for a_, b_ in compare:
-        d = np.mean([boots[h][a_][:kmin] - boots[h][b_][:kmin] for h in order], axis=0)
+        if not usable:
+            macro["deltas"][f"{a_} - {b_}"] = {"delta": float("nan"), "ci": [float("nan")] * 2, "share_boot_positive": float("nan")}
+            continue
+        d = np.mean([boots[h][a_][:kmin] - boots[h][b_][:kmin] for h in usable], axis=0)
         macro["deltas"][f"{a_} - {b_}"] = {"delta": macro["models"][a_]["auc"] - macro["models"][b_]["auc"],
                                             "ci": [float(np.quantile(d, .025)), float(np.quantile(d, .975))],
                                             "share_boot_positive": float((d > 0).mean())}
@@ -1002,7 +1017,7 @@ def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list,
             X = features[models[name]["features"]]
             tr = rows_of([g for g in order if g != h])
             yp = perms[k]
-            return k, name, h, _auc_or_nan(yp[idx[h]], _lr_scores(X[tr], yp[tr], X[idx[h]], chosen[(name, h)]))
+            return k, name, h, _auc_or_nan(yp[idx[h]], _lr_scores_safe(X[tr], yp[tr], X[idx[h]], chosen[(name, h)]))
         got = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(null_task)(k, n, h) for k in range(n_perm) for n in null_models for h in order)
         nul: dict = {}
         for k, n, h, a in got:
@@ -1015,9 +1030,350 @@ def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list,
                                                 "q95": float(np.nanquantile(v, .95)),
                                                 "p": float((1 + np.nansum(v >= obs)) / (1 + np.sum(~np.isnan(v))))}
         for n in null_models:
-            m = np.mean([[nul[(n, h)][k] for h in order] for k in range(n_perm)], axis=1)
+            if not usable:
+                continue
+            m = np.mean([[nul[(n, h)][k] for h in usable] for k in range(n_perm)], axis=1)
             obs = macro["models"][n]["auc"]
             macro["models"][n]["null"] = {"mean": float(m.mean()), "sd": float(m.std(ddof=1)), "q95": float(np.quantile(m, .95)),
                                           "p": float((1 + np.sum(m >= obs)) / (1 + len(m)))}
     return {"phyla": order, "models": list(models), "per_phylum": per, "macro": macro, "n_perm": n_perm, "n_boot": n_boot,
             "inner_auc": {f"{n}|{h}|{C}": float(np.nanmean(v)) for (n, h, C), v in inner_auc.items()}}
+
+
+# ---------------------------------------------------------------------------
+# Near-clade prediction: leave-genus-out inside a phylum, AUC by taxonomic distance
+# ---------------------------------------------------------------------------
+NC_RANKS = ("family", "order", "class", "phylum")  # nearest -> farthest shared rank with a training genome
+NC_LABELS = {"family": "same family", "order": "same order", "class": "same class", "phylum": "phylum only"}
+
+
+def genus_folds(genera, n_splits: int, seed: int):
+    """Fold id per genome such that a genus is never split across folds; folds balanced by genome count."""
+    import numpy as np
+
+    genera = np.asarray(genera)
+    uniq, counts = np.unique(genera, return_counts=True)
+    n_splits = min(n_splits, len(uniq))
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(len(uniq))
+    order = order[np.argsort(-counts[order], kind="stable")]
+    load, fold_of = np.zeros(n_splits), {}
+    for i in order:
+        f = int(np.argmin(load))
+        fold_of[uniq[i]] = f
+        load[f] += counts[i]
+    return np.array([fold_of[g] for g in genera])
+
+
+def taxon_prior_scores(y_tr, tax_tr: dict, tax_te: dict, m: float = 2.0):
+    """Trait prevalence among TRAINING genomes of the nearest shared taxon, shrunk down the ranks.
+
+    phylum prevalence -> class -> order -> family, each level pulled toward its parent with weight `m`
+    (a taxon absent from training leaves the parent value unchanged). This is the "just know the family"
+    baseline: a model that adds nothing beyond taxonomic inheritance can only match it.
+    """
+    import numpy as np
+
+    y_tr = np.asarray(y_tr).astype(float)
+    p0 = float(y_tr.mean())
+    tables = {}
+    for r in ("class", "order", "family"):
+        t: dict = {}
+        for tax, yy in zip(tax_tr[r], y_tr):
+            k, n = t.get(tax, (0.0, 0))
+            t[tax] = (k + yy, n + 1)
+        tables[r] = t
+    out = np.empty(len(tax_te["family"]))
+    for i in range(len(out)):
+        p = p0
+        for r in ("class", "order", "family"):
+            k, n = tables[r].get(tax_te[r][i], (0.0, 0))
+            p = (k + m * p) / (n + m)
+        out[i] = p
+    return out
+
+
+def nearest_rank(tax_tr: dict, tax_te: dict):
+    """0..3 = the lowest rank (family, order, class, phylum) at which each test genome shares a taxon with a training genome."""
+    import numpy as np
+
+    have = {r: set(tax_tr[r]) for r in ("family", "order", "class")}
+    out = np.full(len(tax_te["family"]), 3)
+    for i in range(len(out)):
+        for j, r in enumerate(("family", "order", "class")):
+            if tax_te[r][i] in have[r]:
+                out[i] = j
+                break
+    return out
+
+
+def pool_bins(n_by_rank, pos_by_rank, min_n: int = 60, min_class: int = 15) -> list:
+    """Merge adjacent distance ranks until every bin has >= min_n genomes and >= min_class of each class.
+
+    Merges the farthest insufficient bin into its nearer neighbour (the nearest bin merges outward).
+    Returns a list of lists of rank indices, nearest first.
+    """
+    groups = [[i] for i in range(len(n_by_rank))]
+
+    def ok(g):
+        n, p = sum(n_by_rank[i] for i in g), sum(pos_by_rank[i] for i in g)
+        return n >= min_n and p >= min_class and n - p >= min_class
+
+    while len(groups) > 1:
+        bad = [k for k, g in enumerate(groups) if not ok(g)]
+        if not bad:
+            break
+        k = bad[-1]
+        if k == 0:
+            groups[0] = groups[0] + groups.pop(1)
+        else:
+            groups[k - 1] = groups[k - 1] + groups.pop(k)
+    return groups
+
+
+def genus_pair_counts(y, s, clusters) -> dict:
+    """{cluster: (concordant pairs, pairs)} using only pairs of opposite-class genomes in the SAME cluster."""
+    import numpy as np
+
+    y, s, clusters = np.asarray(y).astype(bool), np.asarray(s, dtype=float), np.asarray(clusters)
+    out = {}
+    for c in np.unique(clusters):
+        m = clusters == c
+        if y[m].all() or (~y[m]).all():
+            continue
+        d = s[m][y[m]][:, None] - s[m][~y[m]][None, :]
+        out[c] = (float((d > 0).sum() + 0.5 * (d == 0).sum()), int(d.size))
+    return out
+
+
+def _choose_C(X_tr, y_tr, g_tr, grid, seed: int) -> float:
+    """C with the best pooled inner out-of-fold AUC (inner folds also split by genus); ties -> smaller C."""
+    import numpy as np
+
+    if len(grid) == 1:
+        return float(grid[0])
+    inner = genus_folds(g_tr, 3, seed)
+    best, best_c = -np.inf, sorted(grid)[0]
+    for C in sorted(grid):
+        oof = np.zeros(len(y_tr))
+        for k in range(3):
+            tr, te = inner != k, inner == k
+            oof[te] = _lr_scores_safe(X_tr[tr], y_tr[tr], X_tr[te], C)
+        a = _auc_or_nan(y_tr, oof)
+        if a == a and a > best + 1e-12:
+            best, best_c = a, C
+    return float(best_c)
+
+
+def _lr_scores_safe(X_tr, y_tr, X_te, C):
+    import numpy as np
+
+    if len(set(np.asarray(y_tr).tolist())) < 2:
+        return np.zeros(len(X_te))
+    return _lr_scores(X_tr, y_tr, X_te, C)
+
+
+def near_clade_evaluate(features: dict, y, phyla, genera, taxa: dict, models: dict, compare: list, n_splits: int = 10,
+                        n_perm: int = 50, n_perm_order: int = 30, n_boot: int = 200, seed: int = 0, n_jobs: int = 1,
+                        min_bin_n: int = 60, min_bin_class: int = 15) -> dict:
+    """Leave-genus-out within each phylum, AUC overall and by taxonomic distance to the nearest training genome.
+
+    For each phylum, genera are split into folds (no genus in both train and test); each model is trained on the
+    other genera of the SAME phylum, with C tuned by an inner genus-grouped CV. Out-of-fold scores are pooled per
+    phylum. Reported: pooled AUC (genus-cluster bootstrap CI, paired differences), the within-genus AUC (only
+    same-genus pairs; defined only for genera holding both classes), and AUC per distance bin. `tax_prior` is an extra
+    baseline (trait prevalence in the nearest shared taxon of the training genomes); `floor` is a constant = 0.5.
+    Shuffle nulls: labels permuted within each phylum, and within each order (keeps order-level prevalence).
+    """
+    import numpy as np
+    from joblib import Parallel, delayed
+
+    y = np.asarray(y).astype(bool)
+    phyla, genera = np.asarray(phyla), np.asarray(genera)
+    taxa = {r: np.asarray(v) for r, v in taxa.items()}
+    order = sorted(set(phyla))
+    idx = {h: np.flatnonzero(phyla == h) for h in order}
+    folds = {h: genus_folds(genera[idx[h]], n_splits, seed + 101 * i) for i, h in enumerate(order)}
+    nf = {h: int(folds[h].max()) + 1 for h in order}
+    names = list(models)
+    scored = names + ["tax_prior"]
+
+    def split(h, f):
+        ii, fo = idx[h], folds[h]
+        return ii[fo != f], ii[fo == f], fo == f
+
+    def fold_task(name, h, f):
+        tr, te, _ = split(h, f)
+        X = features[models[name]["features"]]
+        C = _choose_C(X[tr], y[tr], genera[tr], models[name]["grid"], seed + 31 * f)
+        return name, h, f, C, _lr_scores_safe(X[tr], y[tr], X[te], C)
+
+    got = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(fold_task)(n, h, f) for n in names for h in order for f in range(nf[h]))
+    oof = {(n, h): np.zeros(len(idx[h])) for n in names for h in order}
+    Cs = {}
+    for name, h, f, C, s in got:
+        oof[(name, h)][folds[h] == f] = s
+        Cs[(name, h, f)] = C
+    dist = {h: np.zeros(len(idx[h]), dtype=int) for h in order}
+    for h in order:
+        pr = np.zeros(len(idx[h]))
+        for f in range(nf[h]):
+            tr, te, mask = split(h, f)
+            tt = {r: taxa[r][tr] for r in ("family", "order", "class")}
+            te_t = {r: taxa[r][te] for r in ("family", "order", "class")}
+            pr[mask] = taxon_prior_scores(y[tr], tt, te_t) - float(y[tr].mean())  # centred: the phylum base rate varies by fold
+            dist[h][mask] = nearest_rank(tt, te_t)
+        oof[("tax_prior", h)] = pr
+
+    rng = np.random.default_rng(seed)
+    per, boots = {}, {}
+    for h in order:
+        ii, yy, gg = idx[h], y[idx[h]], genera[idx[h]]
+        sc = {n: oof[(n, h)] for n in scored}
+        b = cluster_bootstrap(sc, yy, gg, n_boot, rng)
+        boots[h] = b
+        uniq, cnt = np.unique(gg, return_counts=True)
+        both = {c: (yy[gg == c].any() and (~yy[gg == c]).any()) for c in uniq}
+        all_pos = sum(1 for c in uniq if yy[gg == c].all())
+        entry = {"n": int(len(ii)), "n_positive": int(yy.sum()), "prevalence": float(yy.mean()),
+                 "genus_stats": {"n_genera": int(len(uniq)), "single_genome": int((cnt == 1).sum()),
+                                 "two_or_more": int((cnt >= 2).sum()), "scorable_both_classes": int(sum(both.values())),
+                                 "all_positive": int(all_pos), "all_negative": int(sum(1 for c in uniq if (~yy[gg == c]).all())),
+                                 "genomes_in_scorable": int(sum(cnt[i] for i, c in enumerate(uniq) if both[c]))},
+                 "distance_counts": {r: {"n": int((dist[h] == j).sum()), "n_positive": int(yy[dist[h] == j].sum())}
+                                     for j, r in enumerate(NC_RANKS)},
+                 "models": {}, "deltas": {}}
+        pc = {n: genus_pair_counts(yy, sc[n], gg) for n in scored}
+        scorable = sorted(pc[names[0]])
+        pairs = np.array([pc[names[0]][c][1] for c in scorable], dtype=float)
+        for n in scored:
+            auc = _auc_or_nan(yy, sc[n])
+            lo, hi = (float(np.quantile(b[n], .025)), float(np.quantile(b[n], .975))) if len(b[n]) else (float("nan"),) * 2
+            entry["models"][n] = {"pooled_auc": auc, "pooled_ci": [lo, hi], "C": [float(Cs[(n, h, f)]) for f in range(nf[h])] if n in names else []}
+        # within-genus (same-genus pairs only), genus-cluster bootstrap on the scorable genera
+        wg = {}
+        if scorable:
+            conc = {n: np.array([pc[n][c][0] for c in scorable]) for n in scored}
+            draws = [rng.integers(0, len(scorable), len(scorable)) for _ in range(n_boot)]
+            for n in scored:
+                pt = conc[n].sum() / pairs.sum()
+                bs = np.array([conc[n][d].sum() / pairs[d].sum() for d in draws])
+                wg[n] = {"auc": float(pt), "ci": [float(np.quantile(bs, .025)), float(np.quantile(bs, .975))]}
+                entry["models"][n]["within_genus"] = wg[n]
+            entry["within_genus_scored"] = {"n_genera": len(scorable), "n_pairs": int(pairs.sum())}
+            wgb = {n: np.array([conc[n][d].sum() / pairs[d].sum() for d in draws]) for n in scored}
+            for a_, b_ in compare:
+                dd = wgb[a_] - wgb[b_]
+                entry["deltas"][f"{a_} - {b_}|within_genus"] = {"delta": wg[a_]["auc"] - wg[b_]["auc"],
+                                                              "ci": [float(np.quantile(dd, .025)), float(np.quantile(dd, .975))]}
+        for a_, b_ in compare:
+            k = min(len(b[a_]), len(b[b_]))
+            dd = b[a_][:k] - b[b_][:k]
+            entry["deltas"][f"{a_} - {b_}"] = {"delta": entry["models"][a_]["pooled_auc"] - entry["models"][b_]["pooled_auc"],
+                                                "ci": [float(np.quantile(dd, .025)), float(np.quantile(dd, .975))],
+                                                "share_boot_positive": float((dd > 0).mean())}
+        per[h] = entry
+
+    # distance bins, pooled globally by genome counts so every phylum uses the same bins
+    n_r = [sum(int((dist[h] == j).sum()) for h in order) for j in range(4)]
+    p_r = [sum(int(y[idx[h]][dist[h] == j].sum()) for h in order) for j in range(4)]
+    groups = pool_bins(n_r, p_r, min_bin_n, min_bin_class)
+    bins = []
+    bin_boot = {}
+    for g in groups:
+        label = " + ".join(NC_LABELS[NC_RANKS[j]] for j in g)
+        row = {"label": label, "ranks": [NC_RANKS[j] for j in g], "phyla": {}}
+        for h in order:
+            m = np.isin(dist[h], g)
+            yy, gg = y[idx[h]][m], genera[idx[h]][m]
+            cell = {"n": int(m.sum()), "n_positive": int(yy.sum()), "n_genera": int(len(set(gg.tolist()))), "sufficient": False}
+            if m.sum() >= min_bin_n and yy.sum() >= min_bin_class and (~yy).sum() >= min_bin_class:
+                sc = {n: oof[(n, h)][m] for n in scored}
+                bb = cluster_bootstrap(sc, yy, gg, n_boot, rng)
+                bin_boot[(label, h)] = bb
+                cell.update(sufficient=True, models={n: {"auc": _auc_or_nan(yy, sc[n]),
+                                                         "ci": [float(np.quantile(bb[n], .025)), float(np.quantile(bb[n], .975))]}
+                                                     for n in scored})
+                cell["deltas"] = {}
+                for a_, b_ in compare:
+                    k = min(len(bb[a_]), len(bb[b_]))
+                    dd = bb[a_][:k] - bb[b_][:k]
+                    cell["deltas"][f"{a_} - {b_}"] = {"delta": cell["models"][a_]["auc"] - cell["models"][b_]["auc"],
+                                                       "ci": [float(np.quantile(dd, .025)), float(np.quantile(dd, .975))]}
+            row["phyla"][h] = cell
+        ok = [h for h in order if row["phyla"][h]["sufficient"]]
+        row["macro"] = None
+        if ok:
+            kmin = min(len(bin_boot[(label, h)][n]) for h in ok for n in scored)
+            row["macro"] = {"n_phyla": len(ok), "phyla": ok, "models": {}, "deltas": {}}
+            for n in scored:
+                mm = np.mean([bin_boot[(label, h)][n][:kmin] for h in ok], axis=0)
+                row["macro"]["models"][n] = {"auc": float(np.mean([row["phyla"][h]["models"][n]["auc"] for h in ok])),
+                                             "ci": [float(np.quantile(mm, .025)), float(np.quantile(mm, .975))]}
+            for a_, b_ in compare:
+                dd = np.mean([bin_boot[(label, h)][a_][:kmin] - bin_boot[(label, h)][b_][:kmin] for h in ok], axis=0)
+                row["macro"]["deltas"][f"{a_} - {b_}"] = {"delta": row["macro"]["models"][a_]["auc"] - row["macro"]["models"][b_]["auc"],
+                                                            "ci": [float(np.quantile(dd, .025)), float(np.quantile(dd, .975))]}
+        bins.append(row)
+
+    macro = {"models": {}, "deltas": {}}
+    kmin = min(len(boots[h][n]) for h in order for n in scored)
+    for n in scored:
+        mm = np.mean([boots[h][n][:kmin] for h in order], axis=0)
+        macro["models"][n] = {"pooled_auc": float(np.mean([per[h]["models"][n]["pooled_auc"] for h in order])),
+                              "pooled_ci": [float(np.quantile(mm, .025)), float(np.quantile(mm, .975))]}
+    for a_, b_ in compare:
+        dd = np.mean([boots[h][a_][:kmin] - boots[h][b_][:kmin] for h in order], axis=0)
+        macro["deltas"][f"{a_} - {b_}"] = {"delta": macro["models"][a_]["pooled_auc"] - macro["models"][b_]["pooled_auc"],
+                                            "ci": [float(np.quantile(dd, .025)), float(np.quantile(dd, .975))],
+                                            "share_boot_positive": float((dd > 0).mean())}
+
+    # shuffle nulls (labels permuted within phylum; and within order, keeping order-level prevalence)
+    null_names = [n for n in names if models[n].get("null", True)] + ["tax_prior"]
+
+    def null_task(mode, k, h):
+        r = np.random.default_rng(seed * 7919 + 131 * k + (0 if mode == "phylum" else 999_983) + order.index(h))
+        ii = idx[h]
+        yp = y.copy()
+        if mode == "phylum":
+            yp[ii] = y[r.permutation(ii)]
+        else:
+            for o in np.unique(taxa["order"][ii]):
+                sub = ii[taxa["order"][ii] == o]
+                yp[sub] = y[r.permutation(sub)]
+        sc = {n: np.zeros(len(ii)) for n in null_names}
+        for f in range(nf[h]):
+            tr, te, mask = split(h, f)
+            for n in null_names:
+                if n == "tax_prior":
+                    sc[n][mask] = taxon_prior_scores(yp[tr], {q: taxa[q][tr] for q in ("family", "order", "class")},
+                                                     {q: taxa[q][te] for q in ("family", "order", "class")}) - float(yp[tr].mean())
+                else:
+                    sc[n][mask] = _lr_scores_safe(features[models[n]["features"]][tr], yp[tr], features[models[n]["features"]][te], Cs[(n, h, f)])
+        return mode, k, h, {n: _auc_or_nan(yp[ii], sc[n]) for n in null_names}
+
+    nulls = {}
+    for mode, count in (("phylum", n_perm), ("order", n_perm_order)):
+        if not count:
+            continue
+        got = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(null_task)(mode, k, h) for k in range(count) for h in order)
+        arr = {(n, h): np.full(count, np.nan) for n in null_names for h in order}
+        for _, k, h, d in got:
+            for n, v in d.items():
+                arr[(n, h)][k] = v
+        res = {}
+        for n in null_names:
+            obs_by_h = {h: (per[h]["models"][n]["pooled_auc"]) for h in order}
+            per_h = {}
+            for h in order:
+                v = arr[(n, h)]
+                per_h[h] = {"mean": float(np.nanmean(v)), "sd": float(np.nanstd(v, ddof=1)),
+                            "p": float((1 + np.nansum(v >= obs_by_h[h])) / (1 + np.sum(~np.isnan(v))))}
+            m = np.nanmean([arr[(n, h)] for h in order], axis=0)
+            obs = float(np.mean(list(obs_by_h.values())))
+            res[n] = {"phyla": per_h, "macro": {"mean": float(np.mean(m)), "sd": float(np.std(m, ddof=1)),
+                                                "p": float((1 + np.sum(m >= obs)) / (1 + len(m)))}}
+        nulls[mode] = {"n_perm": count, "models": res}
+    return {"phyla": order, "models": scored, "per_phylum": per, "macro": macro, "bins": bins, "nulls": nulls,
+            "n_splits": n_splits, "n_boot": n_boot, "bin_rule": {"min_n": min_bin_n, "min_each_class": min_bin_class},
+            "rank_totals": {NC_RANKS[j]: {"n": n_r[j], "n_positive": p_r[j]} for j in range(4)}}
