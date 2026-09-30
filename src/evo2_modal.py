@@ -1433,7 +1433,7 @@ def _prepare_pfam() -> dict:
 
 
 @app.function(image=anno_image, volumes={OUT_DIR: out_vol, PFAM_DIR: pfam_vol}, timeout=3600, cpu=ANNO_CPUS, memory=8192,
-              max_containers=10)
+              max_containers=20)
 def annotate_genome(acc: str) -> dict:
     return _plain_call(_annotate_genome, acc)
 
@@ -1531,3 +1531,83 @@ def annotate_timing(panel: str = PANEL, n: int = 20, seed: int = 20260929, phyla
     print(f"Measured wall for this call incl. container starts: {wall:.0f} s.")
     print("NEXT: read the exact dollars for this run off the Modal dashboard (Usage), divide by "
           f"{len(good)} for $/genome, and multiply by {total}. Do not budget on a remembered rate.")
+
+
+ANNO_STATS_COLS = ["acc", "bp", "n_proteins", "n_families", "gene_call_s", "hmmsearch_s", "wall_s", "cpu_s", "peak_rss_gb"]
+ANNO_MIN_FRACTION = 0.98  # the LOPO needs >= 98% of a panel covered, so a shortfall below this fails the run
+
+
+@app.local_entrypoint()
+def annotate_all(panel: str = PANEL, phyla: str = TIMING_PHYLA, batch: int = 200, limit: int = 0,
+                 max_cpu_hours: float = 400.0, reports: str = "reports", dry_run: bool = False):
+    """Pfam-annotate every panel genome of `phyla` (whole genomes, GA cutoffs). CPU only: no GPU, no embeddings.
+
+    Downloads the genomes that are missing, then annotates in batches of `batch`. Resumable: a genome whose
+    annotations/<acc>.json is on the volume is skipped, so a re-run after any interruption only does the rest.
+    `--limit N` does only the first N outstanding genomes (their results are kept, so a small run is not wasted).
+    Stops between batches once the CPU time consumed passes --max-cpu-hours (a runaway guard, not an estimate).
+    """
+    keep = {p.strip() for p in phyla.split(",") if p.strip()}
+    rows = [r for r in _read_panel(panel) if r["gtdb_phylum"] in keep]
+    have_anno = _existing("annotations")
+    todo = [r for r in rows if f"{r['ncbi_assembly_accession']}.json" not in have_anno]
+    print(f"{len(rows)} genomes in {len(keep)} phyla; {len(rows) - len(todo)} already annotated; {len(todo)} outstanding")
+    if limit:
+        todo = todo[:limit]
+        print(f"--limit {limit}: doing {len(todo)} of them")
+    have_genomes = _existing("genomes")
+    missing = [r for r in todo if f"{r['ncbi_assembly_accession']}.fna.gz" not in have_genomes]
+    print(f"{len(todo) - len(missing)} of those genomes are on the volume; {len(missing)} to download")
+    if dry_run or not todo:
+        return
+
+    bad_accs = set()
+    if missing:
+        _, bad = _prepare(missing, skip_checks=True)
+        bad_accs = {b["acc"] for b in bad}
+    accs = [r["ncbi_assembly_accession"] for r in todo if r["ncbi_assembly_accession"] not in bad_accs]
+    print("Pfam-A:", prepare_pfam.remote())
+
+    stats, errors, cpu_s, t0 = [], [], 0.0, time.time()
+    for i in range(0, len(accs), batch):
+        chunk = accs[i:i + batch]
+        # order_outputs is on by default, so a raised exception is still paired with its accession by position;
+        # the generator is drained before zipping so Modal's client never has to close a half-read one
+        results = list(annotate_genome.map(chunk, return_exceptions=True))
+        for acc, r in zip(chunk, results):
+            if isinstance(r, dict) and "wall_s" in r:
+                stats.append(r)
+                cpu_s += r["cpu_s"]
+            elif not (isinstance(r, dict) and r.get("cached")):
+                errors.append((acc, (r.get("error") if isinstance(r, dict) else repr(r)) or repr(r)))
+        print(f"  {min(i + batch, len(accs))}/{len(accs)} done; {len(stats)} annotated, {len(errors)} failed; "
+              f"{cpu_s / 3600:.1f} CPU-h used, {time.time() - t0:.0f} s elapsed", flush=True)
+        if i == 0 and len(errors) > len(chunk) // 2:
+            raise SystemExit(f"{len(errors)} of the first {len(chunk)} genomes failed, so something is systemic, e.g. "
+                             f"{errors[0][0]}: {str(errors[0][1])[-300:]}")
+        if cpu_s / 3600 > max_cpu_hours:
+            print(f"STOPPING: {cpu_s / 3600:.1f} CPU-h used exceeds --max-cpu-hours {max_cpu_hours}; re-run to resume")
+            break
+
+    prior = {}
+    stats_path = f"{reports}/tables/pfam_annotation_stats.tsv"
+    if Path(stats_path).exists():  # merge with earlier (resumed) runs rather than overwrite them
+        with open(stats_path, newline="") as f:
+            prior = {r["acc"]: r for r in csv.DictReader(f, delimiter="\t")}
+    prior.update({r["acc"]: {c: r[c] for c in ANNO_STATS_COLS} for r in stats})
+    _write_tsv(stats_path, [prior[a] for a in sorted(prior)], ANNO_STATS_COLS)
+
+    have_anno = _existing("annotations")
+    n_ok = sum(f"{r['ncbi_assembly_accession']}.json" in have_anno for r in rows)
+    print(f"\n{len(stats)} genomes annotated this run ({cpu_s / 3600:.1f} CPU-h, {time.time() - t0:.0f} s wall); "
+          f"{len(errors)} failed, {len(bad_accs)} not downloadable")
+    for acc, e in errors[:10] + [(a, "download failed") for a in sorted(bad_accs)[:10]]:
+        print(f"  {acc}: {str(e).strip().splitlines()[-1][:200] if str(e).strip() else e}")
+    print(f"{n_ok} of {len(rows)} panel genomes now have Pfam annotations on the volume ({n_ok / len(rows):.1%}); "
+          f"per-genome stats in {stats_path}")
+    if limit:
+        return
+    if n_ok < ANNO_MIN_FRACTION * len(rows):
+        raise SystemExit(f"Only {n_ok / len(rows):.1%} annotated (need >= {ANNO_MIN_FRACTION:.0%}). Fix the failures above and "
+                         "re-run the same command; finished genomes are kept.")
+    print("Fetch the family lists with: modal volume get evo2-embeddings annotations ./pfam_annotations")
