@@ -910,11 +910,54 @@ def cluster_bootstrap(scores: dict, y, clusters, n_boot: int, rng) -> dict:
     return {m: np.asarray(v) for m, v in out.items()}
 
 
+PFAM_MIN_PREV = 0.005  # stage-1 prevalence filter: keep families present in [0.5%, 99.5%] of the TRAINING genomes
+PFAM_KS = (100, 300, 1000, None)  # stage-2 top-K grid, tuned like C; None = every stage-1 survivor
+
+
+def cmh_rank(X, y, strata, min_prev: float = PFAM_MIN_PREV):
+    """The two-stage Pfam filter, fitted on the rows it is given and nothing else. Returns column indices, best first.
+
+    Stage 1 (label-free): keep binary features whose prevalence among these rows lies in [min_prev, 1 - min_prev].
+    Stage 2 (supervised): rank the survivors by |z|, the Cochran-Mantel-Haenszel statistic over `strata` (the phyla of
+    these rows): z = sum_s (a_s - E_s) / sqrt(sum_s Var_s), with a_s = positives carrying the feature in stratum s,
+    E_s = n1_s m1_s / N_s and Var_s = n1_s n0_s m1_s (N_s - m1_s) / (N_s^2 (N_s - 1)). Stratifying means a family that only
+    tracks phylum (and phylum prevalence differs) scores ~0 instead of topping the list. Strata with fewer than two
+    genomes or a single class contribute nothing; a feature with zero variance everywhere ranks last. Ties keep column order.
+    """
+    import numpy as np
+
+    X, y, strata = np.asarray(X), np.asarray(y).astype(bool), np.asarray(strata)
+    prev = X.mean(0)
+    keep = np.flatnonzero((prev >= min_prev) & (prev <= 1 - min_prev))
+    if len(keep) == 0:
+        return keep
+    Xk = X[:, keep]
+    num, var = np.zeros(len(keep)), np.zeros(len(keep))
+    for s in np.unique(strata):
+        m = strata == s
+        n_s, n1 = int(m.sum()), int(y[m].sum())
+        n0 = n_s - n1
+        if n_s < 2 or n1 == 0 or n0 == 0:
+            continue
+        xs = Xk[m]
+        m1 = xs.sum(0, dtype=np.float64)
+        a = xs[y[m]].sum(0, dtype=np.float64)
+        num += a - n1 * m1 / n_s
+        var += n1 * n0 * m1 * (n_s - m1) / (n_s ** 2 * (n_s - 1))
+    z = np.zeros(len(keep))
+    ok = var > 0
+    z[ok] = np.abs(num[ok]) / np.sqrt(var[ok])
+    return keep[np.argsort(-z, kind="stable")]
+
+
 def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list, n_perm: int = 50, n_boot: int = 1000,
                   seed: int = 0, n_jobs: int = 1) -> dict:
     """Hold out one phylum at a time, train on the rest, score AUC WITHIN the held-out phylum.
 
     features: {feature set name: (N, d) array}. models: {model name: {"features": set, "grid": [C...], "null": bool}}.
+    A model may also carry {"select": f, "ks": [K...]}: f(X_train, y_train, phyla_train) -> column indices best first,
+    called on the training rows of every fit (outer, inner and null; in the null with the permuted labels) and never on
+    the held-out phylum. K (None = all) is then tuned jointly with C and both are reported per held-out phylum.
     For each model and held-out phylum, C is chosen by an inner leave-one-phylum-out over the training phyla
     (metric: mean within-phylum AUC), so a 4096-d model and a 136-d model are each regularised for their
     own size. A one-value grid means "fixed C, no tuning". Uncertainty is a genus-cluster bootstrap; the
@@ -930,9 +973,12 @@ def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list,
     idx = {h: np.flatnonzero(phyla == h) for h in order}
     rows_of = lambda hs: np.concatenate([idx[h] for h in hs])  # noqa: E731
 
+    plain = {n: s for n, s in models.items() if not s.get("select")}
+    selected = {n: s for n, s in models.items() if s.get("select")}  # per-fold column selection on training rows only
+
     # 1. inner tuning: for outer h, inner t, C -> within-phylum AUC of a model trained on (others \ t)
     tasks = []
-    for name, spec in models.items():
+    for name, spec in plain.items():
         for h in order:
             rest = [g for g in order if g != h]
             if len(spec["grid"]) > 1:
@@ -948,19 +994,76 @@ def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list,
     for name, h, C, a in got:
         inner_auc.setdefault((name, h, C), []).append(a)
     chosen = {}
-    for name, spec in models.items():
+    for name, spec in plain.items():
         for h in order:
             if len(spec["grid"]) == 1:
                 chosen[(name, h)] = spec["grid"][0]
             else:  # highest mean inner AUC; ties -> the stronger regulariser (smaller C)
                 chosen[(name, h)] = max(sorted(spec["grid"]), key=lambda C: (np.nanmean(inner_auc[(name, h, C)]), -C))
 
+    # 1b. models with a selector: (K, C) tuned jointly; the selector is refit on the training rows of every fit
+    def _topk(cols, K):
+        return cols if K is None else cols[:K]
+
+    def _fit_cols(X, tr, te, ytr, cols, C):
+        if len(cols) == 0:
+            return np.zeros(len(te))
+        return _lr_scores_safe(X[np.ix_(tr, cols)].astype(np.float32), ytr, X[np.ix_(te, cols)].astype(np.float32), C)
+
+    def inner_sel(name, h, t):
+        spec = selected[name]
+        X = features[spec["features"]]
+        tr = rows_of([g for g in order if g not in (h, t)])
+        cols = spec["select"](X[tr], y[tr], phyla[tr])
+        cache, out = {}, []
+        for K in spec["ks"]:
+            c = _topk(cols, K)
+            for C in spec["grid"]:
+                if (len(c), C) not in cache:  # K at or above the survivor count is the same model as "all"
+                    cache[(len(c), C)] = _auc_or_nan(y[idx[t]], _fit_cols(X, tr, idx[t], y[tr], c, C))
+                out.append((K, C, cache[(len(c), C)]))
+        return name, h, out
+    sel_tasks = [(n, h, t) for n, s in selected.items() if len(s["ks"]) * len(s["grid"]) > 1
+                 for h in order for t in order if t != h]
+    sel_inner: dict = {}
+    for name, h, out in Parallel(n_jobs=n_jobs, prefer="threads")(delayed(inner_sel)(*t) for t in sel_tasks):
+        for K, C, a in out:
+            sel_inner.setdefault((name, h, K, C), []).append(a)
+    sel_chosen = {}
+    for name, spec in selected.items():
+        pairs = [(K, C) for K in spec["ks"] for C in spec["grid"]]
+        for h in order:
+            if len(pairs) == 1:
+                sel_chosen[(name, h)] = pairs[0]
+                continue
+
+            def score(kc, name=name, h=h):  # highest mean inner AUC; ties -> smaller C, then smaller K ("all" last)
+                m = np.nanmean(sel_inner[(name, h, kc[0], kc[1])])
+                return (m if m == m else -np.inf, -kc[1], -(np.inf if kc[0] is None else kc[0]))
+            sel_chosen[(name, h)] = max(pairs, key=score)
+        for h in order:
+            chosen[(name, h)] = sel_chosen[(name, h)][1]  # the C of the chosen (K, C), read by the shared reporting below
+
     # 2. outer fit + within-phylum scores
     def outer(name, h):
         X = features[models[name]["features"]]
         tr = rows_of([g for g in order if g != h])
         return (name, h), _lr_scores_safe(X[tr], y[tr], X[idx[h]], chosen[(name, h)])
-    scores = dict(Parallel(n_jobs=n_jobs, prefer="threads")(delayed(outer)(n, h) for n in models for h in order))
+    scores = dict(Parallel(n_jobs=n_jobs, prefer="threads")(delayed(outer)(n, h) for n in plain for h in order))
+
+    def outer_sel(name, h):
+        spec = selected[name]
+        X = features[spec["features"]]
+        tr = rows_of([g for g in order if g != h])
+        K, C = sel_chosen[(name, h)]
+        cols = spec["select"](X[tr], y[tr], phyla[tr])
+        c = _topk(cols, K)
+        return (name, h), _fit_cols(X, tr, idx[h], y[tr], c, C), {"K": "all" if K is None else int(K), "n_stage1": int(len(cols)),
+                                                                     "n_selected": int(len(c))}
+    sel_info = {}
+    for key, s, info in Parallel(n_jobs=n_jobs, prefer="threads")(delayed(outer_sel)(n, h) for n in selected for h in order):
+        scores[key] = s
+        sel_info[key] = info
 
     # 3. cluster bootstrap, paired across models
     rng = np.random.default_rng(seed)
@@ -976,6 +1079,8 @@ def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list,
             auc = _auc_or_nan(y[te], scores[(n, h)])
             lo, hi = (float(np.quantile(b[n], .025)), float(np.quantile(b[n], .975))) if len(b[n]) else (float("nan"),) * 2
             per[h]["models"][n] = {"auc": auc, "ci": [lo, hi], "C": float(chosen[(n, h)])}
+            if n in selected:  # chosen K and how many families each stage kept, per held-out phylum
+                per[h]["models"][n].update(sel_info[(n, h)])
         for a_, b_ in compare:
             k = min(len(boots[h][a_]), len(boots[h][b_]))
             d = boots[h][a_][:k] - boots[h][b_][:k]
@@ -1017,6 +1122,10 @@ def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list,
             X = features[models[name]["features"]]
             tr = rows_of([g for g in order if g != h])
             yp = perms[k]
+            if name in selected:  # the selector is refit on the PERMUTED training labels; chosen K and C are kept
+                K, C = sel_chosen[(name, h)]
+                cols = _topk(selected[name]["select"](X[tr], yp[tr], phyla[tr]), K)
+                return k, name, h, _auc_or_nan(yp[idx[h]], _fit_cols(X, tr, idx[h], yp[tr], cols, C))
             return k, name, h, _auc_or_nan(yp[idx[h]], _lr_scores_safe(X[tr], yp[tr], X[idx[h]], chosen[(name, h)]))
         got = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(null_task)(k, n, h) for k in range(n_perm) for n in null_models for h in order)
         nul: dict = {}
@@ -1036,8 +1145,12 @@ def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list,
             obs = macro["models"][n]["auc"]
             macro["models"][n]["null"] = {"mean": float(m.mean()), "sd": float(m.std(ddof=1)), "q95": float(np.quantile(m, .95)),
                                           "p": float((1 + np.sum(m >= obs)) / (1 + len(m)))}
-    return {"phyla": order, "models": list(models), "per_phylum": per, "macro": macro, "n_perm": n_perm, "n_boot": n_boot,
-            "inner_auc": {f"{n}|{h}|{C}": float(np.nanmean(v)) for (n, h, C), v in inner_auc.items()}}
+    out = {"phyla": order, "models": list(models), "per_phylum": per, "macro": macro, "n_perm": n_perm, "n_boot": n_boot,
+           "inner_auc": {f"{n}|{h}|{C}": float(np.nanmean(v)) for (n, h, C), v in inner_auc.items()}}
+    if selected:
+        out["inner_auc_selected"] = {f"{n}|{h}|{'all' if K is None else K}|{C}": float(np.nanmean(v))
+                                     for (n, h, K, C), v in sel_inner.items()}
+    return out
 
 
 # ---------------------------------------------------------------------------
