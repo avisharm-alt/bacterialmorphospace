@@ -1151,3 +1151,86 @@ def test_lr_scores_are_intercept_free_and_leave_within_fold_auc_unchanged():
     assert np.allclose(raw - s, model[-1].intercept_[0])  # only a constant was removed
     yt = rng.random(60) < 0.5
     assert core.manual_auc(yt, raw) == core.manual_auc(yt, s)  # a constant shift cannot change an AUC within one fold
+
+
+def _pfam_volume(monkeypatch, m, tmp_path, rows, drop_windows=()):
+    """Whole-genome and window Pfam annotations on the fake volume: families 0-4 follow motility, the rest are noise."""
+    import json
+    import random
+
+    py = random.Random(5)
+    for d in ("annotations", "annotations_windows"):
+        (tmp_path / d).mkdir(exist_ok=True)
+    for r in rows:
+        y = r["motility"] == "yes"
+        fams = [f"PF{j:05d}" for j in range(60) if (py.random() < (0.85 if y else 0.15) if j < 5 else py.random() < 0.4)]
+        json.dump({"acc": r["acc"], "families": fams, "n_proteins": 10, "bp": 36000}, open(tmp_path / "annotations" / f"{r['acc']}.json", "w"))
+        if r["acc"] not in drop_windows:
+            json.dump({"acc": r["acc"], "families": fams[::2], "n_proteins": 5, "bp": 81920, "n_windows": 10},
+                      open(tmp_path / "annotations_windows" / f"{r['acc']}.json", "w"))
+    monkeypatch.setattr(m, "ANNO_DIR", str(tmp_path / "annotations"))
+    monkeypatch.setattr(m, "WINDOW_ANNO_DIR", str(tmp_path / "annotations_windows"))
+
+
+def _run_lopo_entrypoint(m, tmp_path, rows, monkeypatch, **kw):
+    map_stub = type("F", (), {"map": staticmethod(lambda batches, kwargs=None: [m._seqfeat_batch(b, **kwargs) for b in batches])})()
+    monkeypatch.setattr(m, "seqfeat_batch", map_stub)
+    monkeypatch.setattr(m, "lopo_run", type("F", (), {"remote": staticmethod(
+        lambda rows_, n, npm, nb, seed, *extra: m._lopo_run(rows_, n, 4, 30, seed, *extra))})())
+    panel = tmp_path / "panel.tsv"
+    panel.write_text("ncbi_assembly_accession\tassembly_genbank\tgtdb_phylum\tgtdb_genus\tmotility\toxygen\tshape\n" + "".join(
+        f"{r['acc']}\t\t{r['phylum']}\t{r['genus']}\t{r['motility']}\t{'aerobe' if i % 2 else 'anaerobe'}\t{'rod' if i % 3 else 'coccus'}\n"
+        for i, r in enumerate(rows)))
+    m.lopo.info.raw_f(panel=str(panel), phyla="P1,P2,P3,P4", n_windows=10, n_perm=4, n_boot=30, batch=10,
+                      reports=str(tmp_path / "rep"), **kw)
+
+
+def test_lopo_pfam_end_to_end_reports_k_per_fold_and_leaves_the_other_models_identical(tmp_path, monkeypatch, capsys):
+    import json
+
+    pytest.importorskip("sklearn")
+    m = _patched(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "FEAT_DIR", str(tmp_path / "features"))
+    rows = _lopo_rows(tmp_path)
+    _stub_volume_listing(monkeypatch, m, tmp_path)
+    _pfam_volume(monkeypatch, m, tmp_path, rows)
+    _run_lopo_entrypoint(m, tmp_path, rows, monkeypatch)  # the unchanged 4-model run
+    capsys.readouterr()
+    _run_lopo_entrypoint(m, tmp_path, rows, monkeypatch, pfam=True, min_prev=0.01)
+    out = capsys.readouterr().out
+    for needle in ("PRE-SPECIFIED", "motility is the PRIMARY target", "Cochran-Mantel-Haenszel", "Pfam(windows)", "evo2 - pfam",
+                   "pfam_windows - kmer_windows", "PFAM FILTER, chosen per held-out phylum", "stage-1 survivors"):
+        assert needle in out, needle
+    base = json.load(open(tmp_path / "rep" / "tables" / "evo2_lopo_motility.json"))
+    both = json.load(open(tmp_path / "rep" / "tables" / "evo2_lopo_motility_pfam_minprev0.01.json"))  # sensitivity runs are saved apart
+    assert "pfam" not in base["models"] and {"pfam", "pfam_windows"} <= set(both["models"])
+    for h in base["phyla"]:
+        for k in ("evo2", "kmer_genome", "kmer_windows", "gc", "evo2_C1"):
+            assert base["per_phylum"][h]["models"][k] == both["per_phylum"][h]["models"][k], (h, k)
+        for k in ("pfam", "pfam_windows"):
+            assert both["per_phylum"][h]["models"][k]["K"] in (100, 300, 1000, "all")
+    assert both["n_genomes"] == base["n_genomes"] == 48 and both["pfam"]["min_prev"] == 0.01
+
+
+def test_lopo_pfam_labels_a_secondary_target_and_uses_the_same_genomes(tmp_path, monkeypatch, capsys):
+    pytest.importorskip("sklearn")
+    m = _patched(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "FEAT_DIR", str(tmp_path / "features"))
+    rows = _lopo_rows(tmp_path)
+    _stub_volume_listing(monkeypatch, m, tmp_path)
+    _pfam_volume(monkeypatch, m, tmp_path, rows)
+    _run_lopo_entrypoint(m, tmp_path, rows, monkeypatch, pfam=True, target="shape_rod")
+    out = capsys.readouterr().out
+    assert "shape_rod is the SECONDARY target (Benjamini-Hochberg across shape_rod, oxygen_aerobe, oxygen_facultative)" in out
+    assert (tmp_path / "rep" / "tables" / "evo2_lopo_shape_rod_pfam.json").exists()
+
+
+def test_lopo_run_pfam_requires_both_annotations_for_the_same_genomes(tmp_path, monkeypatch):
+    pytest.importorskip("sklearn")
+    m = _patched(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "FEAT_DIR", str(tmp_path / "features"))
+    rows = _lopo_rows(tmp_path)
+    m._seqfeat_batch([r["acc"] for r in rows], 10)
+    _pfam_volume(monkeypatch, m, tmp_path, rows, drop_windows={r["acc"] for r in rows[:20]})  # 20 of 48 lack window annotations
+    with pytest.raises(RuntimeError, match=r"28 of 48 genomes have a depth-10 embedding, sequence features and both Pfam annotations"):
+        m._lopo_run(rows, 10, 2, 10, 1, True)

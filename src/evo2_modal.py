@@ -622,20 +622,33 @@ def _seqfeat_batch(accs: list[str], n_windows: int) -> dict:
 
 
 @app.function(image=cpu_image, volumes={OUT_DIR: out_vol}, timeout=10800, cpu=8, memory=16384)
-def lopo_run(rows: list[dict], n_windows: int, n_perm: int, n_boot: int, seed: int) -> dict:
-    return _plain_call(_lopo_run, rows, n_windows, n_perm, n_boot, seed)
+def lopo_run(rows: list[dict], n_windows: int, n_perm: int, n_boot: int, seed: int, pfam: bool = False,
+             min_prev: float = core.PFAM_MIN_PREV) -> dict:
+    return _plain_call(_lopo_run, rows, n_windows, n_perm, n_boot, seed, pfam, min_prev)
 
 
-def _lopo_run(rows: list[dict], n_windows: int, n_perm: int, n_boot: int, seed: int) -> dict:
-    """Leave-one-phylum-out, scored within the held-out phylum: Evo 2 vs tetranucleotides vs GC vs the trivial floor."""
+def _lopo_run(rows: list[dict], n_windows: int, n_perm: int, n_boot: int, seed: int, pfam: bool = False,
+              min_prev: float = core.PFAM_MIN_PREV) -> dict:
+    """Leave-one-phylum-out, scored within the held-out phylum: Evo 2 vs tetranucleotides vs GC vs the trivial floor.
+
+    pfam=True adds `pfam` (whole-genome Pfam presence/absence) and `pfam_windows` (Pfam in the windows Evo 2 saw), each
+    through the two-stage in-fold filter (prevalence >= min_prev, then CMH top-K with K tuned like C), on the SAME genomes.
+    """
+    import json
+
     import numpy as np
     from threadpoolctl import threadpool_limits
 
     out_vol.reload()
     ok = [r for r in rows if os.path.exists(f"{EMB_DIR}/{r['acc']}__n{n_windows}.npy")
-          and os.path.exists(f"{FEAT_DIR}/{r['acc']}__seqfeat_n{n_windows}.npy")]
+          and os.path.exists(f"{FEAT_DIR}/{r['acc']}__seqfeat_n{n_windows}.npy")
+          and (not pfam or (os.path.exists(f"{ANNO_DIR}/{r['acc']}.json") and os.path.exists(f"{WINDOW_ANNO_DIR}/{r['acc']}.json")))]
     if not rows or len(ok) < 0.98 * len(rows):
         miss = [r["acc"] for r in rows if r not in ok]
+        if pfam:
+            raise RuntimeError(f"{len(ok)} of {len(rows)} genomes have a depth-{n_windows} embedding, sequence features and both "
+                               f"Pfam annotations (need >= 98%; missing e.g. {miss[:3]}); run embed_all, seqfeat, annotate_all "
+                               "and annotate_windows first")
         raise RuntimeError(f"{len(ok)} of {len(rows)} genomes have both a depth-{n_windows} embedding and sequence features "
                            f"(need >= 98%; missing e.g. {miss[:3]}); run embed_all and seqfeat first")
     emb = np.stack([np.load(f"{EMB_DIR}/{r['acc']}__n{n_windows}.npy") for r in ok])
@@ -652,6 +665,21 @@ def _lopo_run(rows: list[dict], n_windows: int, n_perm: int, n_boot: int, seed: 
               "gc": {"features": "gc", "grid": grid, "null": True},
               "evo2_C1": {"features": "evo2", "grid": [1.0], "null": False}}  # the pre-specified pipeline, untuned
     compare = [("evo2", "kmer_genome"), ("evo2", "kmer_windows"), ("evo2", "gc"), ("evo2_C1", "kmer_genome")]
+    if pfam:
+        whole = [json.load(open(f"{ANNO_DIR}/{r['acc']}.json"))["families"] for r in ok]
+        wins = [json.load(open(f"{WINDOW_ANNO_DIR}/{r['acc']}.json"))["families"] for r in ok]
+        fam_ix = {f: i for i, f in enumerate(sorted({f for fs in whole + wins for f in fs}))}
+
+        def matrix(lists):
+            M = np.zeros((len(ok), len(fam_ix)), dtype=np.uint8)
+            for i, fs in enumerate(lists):
+                M[i, [fam_ix[f] for f in fs]] = 1
+            return M
+        features["pfam"], features["pfam_windows"] = matrix(whole), matrix(wins)
+        select = lambda X, yy, strata: core.cmh_rank(X, yy, strata, min_prev=min_prev)  # noqa: E731
+        for name in ("pfam", "pfam_windows"):  # identical pipeline; K and C are tuned separately for each model
+            models[name] = {"features": name, "grid": grid, "ks": list(core.PFAM_KS), "select": select, "null": True}
+        compare += [("evo2", "pfam"), ("evo2", "pfam_windows"), ("pfam", "kmer_genome"), ("pfam_windows", "kmer_windows")]
     with threadpool_limits(limits=1):  # one BLAS thread per worker thread, no oversubscription
         res = core.lopo_evaluate(features, y, [r["phylum"] for r in ok], [r["genus"] for r in ok], models, compare,
                                  n_perm=n_perm, n_boot=n_boot, seed=seed, n_jobs=8)
@@ -659,6 +687,9 @@ def _lopo_run(rows: list[dict], n_windows: int, n_perm: int, n_boot: int, seed: 
     res.update({"n_genomes": len(ok), "n_requested": len(rows), "missing": [r["acc"] for r in rows if r not in ok],
                 "median_fraction_of_genome_seen_by_evo2": float(np.median(seen)),
                 "median_genome_mb": float(np.median(sf[:, 0, 256:].sum(1)) / 1e6), "n_windows": n_windows})
+    if pfam:
+        res.update({"pfam": {"min_prev": min_prev, "ks": ["all" if k is None else k for k in core.PFAM_KS],
+                             "n_families_total": len(fam_ix)}})
     return res
 
 
@@ -1103,10 +1134,12 @@ def _ci(x: dict) -> str:
 @app.local_entrypoint()
 def lopo(panel: str = PANEL, phyla: str = "Pseudomonadota,Bacillota,Actinomycetota,Bacteroidota", n_windows: int = 10,
          n_perm: int = 50, n_boot: int = 1000, seed: int = 20260929, batch: int = 40, reports: str = "reports",
-         target: str = "motility"):
+         target: str = "motility", pfam: bool = False, min_prev: float = core.PFAM_MIN_PREV):
     """Leave-one-phylum-out, AUC scored WITHIN the held-out phylum: Evo 2 vs composition baselines. CPU only.
 
     --target is one of motility, oxygen_aerobe, oxygen_facultative, shape_rod (positive class vs the rest).
+    --pfam adds the Pfam presence/absence model and its matched-window control (docs/phase2_pfam_spec.md); --min-prev is the
+    stage-1 prevalence threshold (0.005 is the approved value; other values are the sensitivity check, saved separately).
     """
     import json
 
@@ -1133,11 +1166,20 @@ def lopo(panel: str = PANEL, phyla: str = "Pseudomonadota,Bacillota,Actinomyceto
         print(f"  {len(errs)} genomes failed feature extraction, e.g. {errs[0][0]}: {errs[0][1].strip().splitlines()[-1]}")
 
     print(f"evaluating (leave-one-phylum-out, {n_perm} shuffles, {n_boot} genus-cluster bootstraps)...")
-    d = lopo_run.remote(emb, n_windows, n_perm, n_boot, seed)
+    d = lopo_run.remote(emb, n_windows, n_perm, n_boot, seed, *((True, min_prev) if pfam else ()))  # non-Pfam call unchanged
+    out_name = f"evo2_lopo_{target}" + (("_pfam" + ("" if min_prev == core.PFAM_MIN_PREV else f"_minprev{min_prev:g}")) if pfam else "")
     Path(f"{reports}/tables").mkdir(parents=True, exist_ok=True)
-    Path(f"{reports}/tables/evo2_lopo_{target}.json").write_text(json.dumps(d, indent=2, sort_keys=True) + "\n")
+    Path(f"{reports}/tables/{out_name}.json").write_text(json.dumps(d, indent=2, sort_keys=True) + "\n")
 
     names = {"evo2": "Evo 2", "kmer_genome": "k-mer(genome)", "kmer_windows": "k-mer(windows)", "gc": "GC only"}
+    if pfam:
+        names.update({"pfam": "Pfam", "pfam_windows": "Pfam(windows)"})
+        role = ("PRIMARY target" if target == "motility" else
+                "SECONDARY target (Benjamini-Hochberg across shape_rod, oxygen_aerobe, oxygen_facultative)")
+        print(f"\nPRE-SPECIFIED (docs/phase2_pfam_spec.md): {target} is the {role}. Two-stage Pfam filter inside every fold: prevalence "
+              f"in [{min_prev:.1%}, {1 - min_prev:.1%}] of the training genomes, then top-K by Cochran-Mantel-Haenszel over the training "
+              f"phyla; K in {d['pfam']['ks']} tuned jointly with C by the inner leave-one-phylum-out, chosen K reported per fold, "
+              f"never as separate results. The matched-window model uses the identical pipeline.")
     print(f"\n=== {target.upper()} ({col} = {pos} vs rest), LEAVE-ONE-PHYLUM-OUT: {d['n_genomes']} of {d['n_requested']} genomes, depth {d['n_windows']} ===")
     print(f"  AUC is scored WITHIN the held-out phylum, trained on the other {len(d['phyla']) - 1}. Brackets: 95% genus-cluster bootstrap CI.")
     print(f"  Evo 2 saw {d['median_fraction_of_genome_seen_by_evo2']:.1%} of a median {d['median_genome_mb']:.1f} Mb genome; "
@@ -1150,7 +1192,10 @@ def lopo(panel: str = PANEL, phyla: str = "Pseudomonadota,Bacillota,Actinomyceto
     print(f"  {'MACRO MEAN':<16} {'':>4} {'':>6} {'':>6} | " + " | ".join(f"{_ci(d['macro']['models'][k]):^21}" for k in names) + " | 0.500")
 
     print("\n  PAIRED DIFFERENCE IN AUC (same genera resampled for both models; 95% CI; share of resamples where Evo 2 is ahead)")
-    for pair in ("evo2 - kmer_genome", "evo2 - kmer_windows", "evo2 - gc", "evo2_C1 - kmer_genome"):
+    pairs = ("evo2 - kmer_genome", "evo2 - kmer_windows", "evo2 - gc", "evo2_C1 - kmer_genome")
+    if pfam:
+        pairs += ("evo2 - pfam", "evo2 - pfam_windows", "pfam - kmer_genome", "pfam_windows - kmer_windows")
+    for pair in pairs:
         cells = []
         for h in d["phyla"]:
             x = d["per_phylum"][h]["deltas"][pair]
@@ -1172,6 +1217,14 @@ def lopo(panel: str = PANEL, phyla: str = "Pseudomonadota,Bacillota,Actinomyceto
         print(f"  {names[k]:<15} chosen C: " + ", ".join(f"{h[:6]} {d['per_phylum'][h]['models'][k]['C']:g}" for h in d["phyla"]))
     print("  Evo 2, C=1 fixed:  " + ", ".join(f"{h[:6]} {d['per_phylum'][h]['models']['evo2_C1']['auc']:.3f}" for h in d["phyla"]) +
           f" || macro {d['macro']['models']['evo2_C1']['auc']:.3f}")
+    if pfam:
+        print("\n  PFAM FILTER, chosen per held-out phylum (K tuned jointly with C; stability of K is the thing to read here)")
+        for k in ("pfam", "pfam_windows"):
+            ms = [d["per_phylum"][h]["models"][k] for h in d["phyla"]]
+            print(f"  {names[k]:<15} K: " + ", ".join(f"{h[:6]} {m['K']}" for h, m in zip(d["phyla"], ms)) +
+                  " | C: " + ", ".join(f"{m['C']:g}" for m in ms) +
+                  " | stage-1 survivors: " + ", ".join(str(m["n_stage1"]) for m in ms) +
+                  " | selected: " + ", ".join(str(m["n_selected"]) for m in ms))
 
     m = d["macro"]["deltas"]["evo2 - kmer_genome"]
     wins = sum(d["per_phylum"][h]["deltas"]["evo2 - kmer_genome"]["ci"][0] > 0 for h in d["phyla"])
@@ -1184,7 +1237,7 @@ def lopo(panel: str = PANEL, phyla: str = "Pseudomonadota,Bacillota,Actinomyceto
         verdict = "no detectable difference between Evo 2 and whole-genome tetranucleotide frequencies (the CI spans zero)"
     print(f"\n  VERDICT vs k-mer(genome): {verdict}. Macro ΔAUC {m['delta']:+.3f} [{m['ci'][0]:+.3f},{m['ci'][1]:+.3f}]; "
           f"Evo 2 clearly ahead in {wins}/{len(d['phyla'])} phyla, clearly behind in {losses}/{len(d['phyla'])}.")
-    print(f"\nsaved {reports}/tables/evo2_lopo_{target}.json  (CPU only, no GPU spend)")
+    print(f"\nsaved {reports}/tables/{out_name}.json  (CPU only, no GPU spend)")
 
 
 TAXONOMY_URL = "https://data.gtdb.ecogenomic.org/releases/latest/bac120_taxonomy.tsv.gz"
