@@ -973,9 +973,12 @@ def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list,
     null refits on labels shuffled WITHIN each phylum (phylum prevalence kept, within-phylum signal destroyed).
     A constant score ties every pair, so the "majority class" floor is exactly 0.5 for a within-phylum AUC.
     """
+    import time
+
     import numpy as np
     from joblib import Parallel, delayed
 
+    t_start, stage = time.perf_counter(), {}
     y = np.asarray(y).astype(bool)
     phyla, genera = np.asarray(phyla), np.asarray(genera)
     order = sorted(set(phyla))
@@ -1074,6 +1077,7 @@ def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list,
         scores[key] = s
         sel_info[key] = info
 
+    stage["tune_and_outer_s"] = time.perf_counter() - t_start
     # 3. cluster bootstrap, paired across models
     rng = np.random.default_rng(seed)
     boots, per = {}, {}
@@ -1116,6 +1120,7 @@ def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list,
                                             "ci": [float(np.quantile(d, .025)), float(np.quantile(d, .975))],
                                             "share_boot_positive": float((d > 0).mean())}
 
+    stage["bootstrap_s"] = time.perf_counter() - t_start - stage["tune_and_outer_s"]
     # 4. shuffle null: labels permuted within each phylum, refit with the chosen C, scored in the held-out phylum
     null_models = [n for n, spec in models.items() if spec.get("null", True)]
     if n_perm and null_models:
@@ -1154,8 +1159,10 @@ def lopo_evaluate(features: dict, y, phyla, genera, models: dict, compare: list,
             obs = macro["models"][n]["auc"]
             macro["models"][n]["null"] = {"mean": float(m.mean()), "sd": float(m.std(ddof=1)), "q95": float(np.quantile(m, .95)),
                                           "p": float((1 + np.sum(m >= obs)) / (1 + len(m)))}
+    stage["null_s"] = time.perf_counter() - t_start - stage["tune_and_outer_s"] - stage["bootstrap_s"]
     out = {"phyla": order, "models": list(models), "per_phylum": per, "macro": macro, "n_perm": n_perm, "n_boot": n_boot,
-           "inner_auc": {f"{n}|{h}|{C}": float(np.nanmean(v)) for (n, h, C), v in inner_auc.items()}}
+           "inner_auc": {f"{n}|{h}|{C}": float(np.nanmean(v)) for (n, h, C), v in inner_auc.items()},
+           "timing_s": {k: float(v) for k, v in stage.items()}}
     if selected:
         out["inner_auc_selected"] = {f"{n}|{h}|{'all' if K is None else K}|{C}": float(np.nanmean(v))
                                      for (n, h, K, C), v in sel_inner.items()}

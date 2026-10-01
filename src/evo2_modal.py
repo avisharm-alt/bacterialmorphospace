@@ -1134,12 +1134,14 @@ def _ci(x: dict) -> str:
 @app.local_entrypoint()
 def lopo(panel: str = PANEL, phyla: str = "Pseudomonadota,Bacillota,Actinomycetota,Bacteroidota", n_windows: int = 10,
          n_perm: int = 50, n_boot: int = 1000, seed: int = 20260929, batch: int = 40, reports: str = "reports",
-         target: str = "motility", pfam: bool = False, min_prev: float = core.PFAM_MIN_PREV):
+         target: str = "motility", pfam: bool = False, min_prev: float = core.PFAM_MIN_PREV, smoke: bool = False):
     """Leave-one-phylum-out, AUC scored WITHIN the held-out phylum: Evo 2 vs composition baselines. CPU only.
 
     --target is one of motility, oxygen_aerobe, oxygen_facultative, shape_rod (positive class vs the rest).
     --pfam adds the Pfam presence/absence model and its matched-window control (docs/phase2_pfam_spec.md); --min-prev is the
     stage-1 prevalence threshold (0.005 is the approved value; other values are the sensitivity check, saved separately).
+    --smoke shuffles the labels WITHIN each phylum first (a fixed seed) so the whole pipeline can be timed and checked for
+    false positives with no real signal; its results are meaningless as findings and are saved with a _SMOKE suffix.
     """
     import json
 
@@ -1150,6 +1152,18 @@ def lopo(panel: str = PANEL, phyla: str = "Pseudomonadota,Bacillota,Actinomyceto
     rows = [{"acc": r["ncbi_assembly_accession"], "phylum": r["gtdb_phylum"], "genus": r["gtdb_genus"],
              "motility": r["motility"], "y": r[col] == pos}
             for r in _read_panel(panel) if r["gtdb_phylum"] in keep]
+    if smoke:
+        import random
+
+        rng = random.Random(seed)
+        for ph in sorted({r["phylum"] for r in rows}):
+            at = [i for i, r in enumerate(rows) if r["phylum"] == ph]
+            ys = [rows[i]["y"] for i in at]
+            rng.shuffle(ys)  # within-phylum permutation: phylum prevalence kept, within-phylum signal destroyed
+            for i, v in zip(at, ys):
+                rows[i]["y"] = v
+        print("SMOKE RUN: labels shuffled within each phylum. Nothing below is a finding; it times the pipeline and checks "
+              "that it reports no signal where there is none.")
     have = _existing("embeddings")
     emb = [r for r in rows if f"{r['acc']}__n{n_windows}.npy" in have and f"{r['acc']}__meta.json" in have]
     print(f"{len(emb)} of {len(rows)} genomes in {len(keep)} phyla have a depth-{n_windows} embedding on the volume")
@@ -1167,7 +1181,8 @@ def lopo(panel: str = PANEL, phyla: str = "Pseudomonadota,Bacillota,Actinomyceto
 
     print(f"evaluating (leave-one-phylum-out, {n_perm} shuffles, {n_boot} genus-cluster bootstraps)...")
     d = lopo_run.remote(emb, n_windows, n_perm, n_boot, seed, *((True, min_prev) if pfam else ()))  # non-Pfam call unchanged
-    out_name = f"evo2_lopo_{target}" + (("_pfam" + ("" if min_prev == core.PFAM_MIN_PREV else f"_minprev{min_prev:g}")) if pfam else "")
+    out_name = (f"evo2_lopo_{target}" + (("_pfam" + ("" if min_prev == core.PFAM_MIN_PREV else f"_minprev{min_prev:g}")) if pfam else "")
+                + ("_SMOKE" if smoke else ""))
     Path(f"{reports}/tables").mkdir(parents=True, exist_ok=True)
     Path(f"{reports}/tables/{out_name}.json").write_text(json.dumps(d, indent=2, sort_keys=True) + "\n")
 

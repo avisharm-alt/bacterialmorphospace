@@ -1234,3 +1234,36 @@ def test_lopo_run_pfam_requires_both_annotations_for_the_same_genomes(tmp_path, 
     _pfam_volume(monkeypatch, m, tmp_path, rows, drop_windows={r["acc"] for r in rows[:20]})  # 20 of 48 lack window annotations
     with pytest.raises(RuntimeError, match=r"28 of 48 genomes have a depth-10 embedding, sequence features and both Pfam annotations"):
         m._lopo_run(rows, 10, 2, 10, 1, True)
+
+
+def test_lopo_smoke_shuffles_labels_within_phylum_and_saves_apart(tmp_path, monkeypatch, capsys):
+    pytest.importorskip("sklearn")
+    m = _patched(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "FEAT_DIR", str(tmp_path / "features"))
+    rows = _lopo_rows(tmp_path)
+    _stub_volume_listing(monkeypatch, m, tmp_path)
+    _pfam_volume(monkeypatch, m, tmp_path, rows)
+    seen = {}
+    real = m._lopo_run
+
+    def spy(rows_, n, npm, nb, seed, *extra):
+        seen["rows"] = rows_
+        return real(rows_, n, npm, nb, seed, *extra)
+    map_stub = type("F", (), {"map": staticmethod(lambda batches, kwargs=None: [m._seqfeat_batch(b, **kwargs) for b in batches])})()
+    monkeypatch.setattr(m, "seqfeat_batch", map_stub)
+    monkeypatch.setattr(m, "lopo_run", type("F", (), {"remote": staticmethod(lambda rows_, n, npm, nb, seed, *e: spy(rows_, n, 4, 30, seed, *e))})())
+    panel = tmp_path / "panel.tsv"
+    panel.write_text("ncbi_assembly_accession\tassembly_genbank\tgtdb_phylum\tgtdb_genus\tmotility\n" + "".join(
+        f"{r['acc']}\t\t{r['phylum']}\t{r['genus']}\t{r['motility']}\n" for r in rows))
+    m.lopo.info.raw_f(panel=str(panel), phyla="P1,P2,P3,P4", n_windows=10, n_perm=4, n_boot=30, batch=10,
+                      reports=str(tmp_path / "rep"), pfam=True, smoke=True)
+    out = capsys.readouterr().out
+    assert "SMOKE RUN: labels shuffled within each phylum" in out
+    assert (tmp_path / "rep" / "tables" / "evo2_lopo_motility_pfam_SMOKE.json").exists()
+    assert not (tmp_path / "rep" / "tables" / "evo2_lopo_motility_pfam.json").exists()  # never overwrites a real result
+    truth = {r["acc"]: r["motility"] == "yes" for r in rows}
+    got = {r["acc"]: r["y"] for r in seen["rows"]}
+    assert got != truth  # labels really were shuffled
+    for ph in {r["phylum"] for r in rows}:  # ... but within phylum, so each phylum keeps its number of positives
+        accs = [r["acc"] for r in rows if r["phylum"] == ph]
+        assert sum(got[a] for a in accs) == sum(truth[a] for a in accs)
