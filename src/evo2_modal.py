@@ -1617,3 +1617,106 @@ def annotate_all(panel: str = PANEL, phyla: str = TIMING_PHYLA, batch: int = 200
     # the destination directory must already exist: for a missing one, every file is written to the same path and
     # only the last survives. The files land in pfam_annotations/annotations/<acc>.json
     print("Fetch the family lists with: mkdir -p pfam_annotations && modal volume get evo2-embeddings annotations ./pfam_annotations")
+
+
+# ---------------------------------------------------------------------------
+# Matched-window control: Pfam on ONLY the windows Evo 2 saw. CPU only, no GPU.
+#
+#   modal run -m src.evo2_modal::annotate_windows
+#
+# Reads each genome's embeddings/<acc>__meta.json (the saved [contig, start] pairs, WINDOW bp each), annotates those
+# windows alone with the same pyrodigal + Pfam-A gathering cutoffs as the whole-genome run, and caches
+# annotations_windows/<acc>.json. A batch of genomes shares ONE pass over Pfam-A (the 2.2 GB HMM file is read once per
+# batch, not once per genome). Resumable.
+# ---------------------------------------------------------------------------
+WINDOW_ANNO_DIR = f"{OUT_DIR}/annotations_windows"
+
+
+@app.function(image=anno_image, volumes={OUT_DIR: out_vol, PFAM_DIR: pfam_vol}, timeout=3600, cpu=ANNO_CPUS, memory=8192,
+              max_containers=10)
+def annotate_windows_batch(accs: list[str], n_windows: int) -> dict:
+    return _plain_call(_annotate_windows_batch, accs, n_windows)
+
+
+def _annotate_windows_batch(accs: list[str], n_windows: int) -> dict:
+    import json
+
+    out_vol.reload()  # the embedding meta files were written by other containers
+    os.makedirs(WINDOW_ANNO_DIR, exist_ok=True)
+    t0, c0 = time.time(), sum(os.times()[:4])
+    windows, skipped, errors = {}, 0, []
+    for acc in accs:
+        if os.path.exists(f"{WINDOW_ANNO_DIR}/{acc}.json"):
+            skipped += 1
+            continue
+        try:
+            meta = json.load(open(f"{EMB_DIR}/{acc}__meta.json"))
+            w = meta["windows"]
+            if meta["pool_n"] != n_windows:  # sweep genomes: depth-N vectors are an evenly spaced subset of the pool
+                w = [w[i] for i in core.subset_indices(meta["pool_n"], n_windows)]
+            windows[acc] = core.window_sequences(f"{GENOME_DIR}/{acc}.fna.gz", w)  # the very windows sequence_features counts
+        except Exception:  # noqa: BLE001
+            errors.append([acc, traceback.format_exc()[-300:]])
+    res = (anno.annotate_window_groups(windows, PFAM_HMM, ANNO_CPUS) if windows
+           else {"groups": {}, "gene_call_s": 0.0, "hmmsearch_s": 0.0})
+    for acc, g in res["groups"].items():
+        with open(f"{WINDOW_ANNO_DIR}/{acc}.json", "w") as f:
+            json.dump({"acc": acc, "n_windows": n_windows, **g}, f)
+    out_vol.commit()
+    groups = list(res["groups"].values())
+    return {"done": len(groups), "skipped": skipped, "errors": errors, "wall_s": time.time() - t0,
+            "cpu_s": sum(os.times()[:4]) - c0, "gene_call_s": res["gene_call_s"], "hmmsearch_s": res["hmmsearch_s"],
+            "n_families": [len(g["families"]) for g in groups], "n_proteins": [g["n_proteins"] for g in groups],
+            "bp": [g["bp"] for g in groups]}
+
+
+@app.local_entrypoint()
+def annotate_windows(panel: str = PANEL, phyla: str = TIMING_PHYLA, n_windows: int = 10, batch: int = 100, limit: int = 0,
+                     dry_run: bool = False):
+    """Pfam on only the windows Evo 2 saw (the matched-window control). CPU only. Resumable; --limit N does N genomes."""
+    import statistics as st
+
+    keep = {p.strip() for p in phyla.split(",") if p.strip()}
+    rows = [r for r in _read_panel(panel) if r["gtdb_phylum"] in keep]
+    have_meta, have_done = _existing("embeddings"), _existing("annotations_windows")
+    accs = [r["ncbi_assembly_accession"] for r in rows]
+    no_meta = [a for a in accs if f"{a}__meta.json" not in have_meta]
+    todo = [a for a in accs if f"{a}__meta.json" in have_meta and f"{a}.json" not in have_done]
+    print(f"{len(accs)} genomes in {len(keep)} phyla; {len(accs) - len(no_meta)} have an embedding meta; "
+          f"{sum(f'{a}.json' in have_done for a in accs)} already window-annotated; {len(todo)} outstanding")
+    if no_meta:
+        print(f"  {len(no_meta)} have no embedding meta and are skipped, e.g. {no_meta[:3]}")
+    if limit:
+        todo = todo[:limit]
+        print(f"--limit {limit}: doing {len(todo)}")
+    if dry_run or not todo:
+        return
+    print("Pfam-A:", prepare_pfam.remote())
+    chunks = [todo[i:i + batch] for i in range(0, len(todo), batch)]
+    t0 = time.time()
+    results = list(annotate_windows_batch.map(chunks, kwargs={"n_windows": n_windows}, return_exceptions=True))
+    fams, prots, bps, errors, cpu_s, done = [], [], [], [], 0.0, 0
+    for chunk, r in zip(chunks, results):
+        if isinstance(r, dict):
+            fams += r["n_families"]
+            prots += r["n_proteins"]
+            bps += r["bp"]
+            errors += r["errors"]
+            cpu_s += r["cpu_s"]
+            done += r["done"]
+            print(f"  batch of {len(chunk)}: {r['done']} annotated, {len(r['errors'])} errors, {r['wall_s']:.0f} s wall, "
+                  f"{r['cpu_s']:.0f} CPU-s (gene calling {r['gene_call_s']:.1f} s, hmmsearch {r['hmmsearch_s']:.1f} s)", flush=True)
+        else:
+            errors += [[a, repr(r)] for a in chunk]
+            print(f"  batch of {len(chunk)} FAILED: {r!r}"[:300], flush=True)
+    if fams:
+        q = lambda x: f"min {min(x):g} / median {st.median(x):g} / max {max(x):g}"  # noqa: E731
+        print(f"\n{done} genomes window-annotated in {time.time() - t0:.0f} s wall, {cpu_s / 3600:.2f} CPU-h")
+        print(f"  windowed bp per genome: {q(bps)}\n  proteins per genome:    {q(prots)}\n  Pfam families per genome: {q(fams)}")
+    for a, e in errors[:10]:
+        print(f"  ERROR {a}: {str(e).strip().splitlines()[-1][:200]}")
+    have_done = _existing("annotations_windows")
+    n_ok = sum(f"{a}.json" in have_done for a in accs)
+    print(f"{n_ok} of {len(accs)} panel genomes now have window annotations on the volume ({n_ok / len(accs):.1%})")
+    if not limit and n_ok < ANNO_MIN_FRACTION * len(accs):
+        raise SystemExit(f"Only {n_ok / len(accs):.1%} window-annotated (need >= {ANNO_MIN_FRACTION:.0%}); re-run to resume.")

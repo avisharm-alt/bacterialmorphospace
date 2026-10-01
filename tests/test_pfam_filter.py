@@ -149,3 +149,30 @@ def test_a_selector_model_finds_planted_within_phylum_signal():
                feats, y, ph, genus, n_perm=10)
     assert res["macro"]["models"]["pfam"]["auc"] > 0.8
     assert res["macro"]["models"]["pfam"]["null"]["mean"] < 0.65
+
+
+def test_window_sequences_are_exactly_the_windows_sequence_features_counts(tmp_path):
+    import gzip
+    import random
+
+    rng = random.Random(11)
+    seq = lambda n: "".join(rng.choice("ACGT") for _ in range(n))  # noqa: E731
+    contigs = [("c1", seq(30000)), ("c2", seq(20000)), ("c1", seq(9000))]  # a repeated id: the FIRST occurrence wins
+    p = tmp_path / "g.fna.gz"
+    with gzip.open(p, "wt") as f:
+        for cid, s in contigs:
+            f.write(f">{cid} some description\n")
+            for i in range(0, len(s), 70):
+                f.write(s[i:i + 70] + "\n")
+    windows = [["c1", 0], ["c2", 5000], ["c1", 21000]]
+    wins = ec.window_sequences(p, windows)
+    assert [w[0] for w in wins] == ["c1:0", "c2:5000", "c1:21000"]
+    assert all(len(s) == ec.WINDOW for _, s in wins)
+    assert wins[2][1] == contigs[0][1][21000:21000 + ec.WINDOW]  # from the first c1, not the 9 kb duplicate
+    want = ec.sequence_features(p, windows)[1]
+    got = np.zeros(260)
+    for _, s in wins:
+        t, m = ec.count_tetra(s)
+        got[:256] += t
+        got[256:] += m
+    assert np.array_equal(got, want)

@@ -55,8 +55,11 @@ permuted training labels (a selection fitted on the real labels would leak signa
 - pyrodigal on each genome's windows (82 kb total is below the 100 kb training minimum, so metagenomic mode is used, as
   `annotate_contigs` already does), then one pyhmmer pass per batch of genomes against the same Pfam-A with gathering
   cutoffs, so Pfam-A is read once per batch and not once per genome. Presence = at least one hit above cutoff.
-- Expectation (unmeasured): tens of families per genome, since windows cut genes at their edges.
-- CPU only. A canary batch is run and timed before the full set.
+- CPU only; a 100-genome canary was run and timed before the full set. **Measured (label-free, 2,435 genomes, 0 errors,
+  about 3.9 CPU-h in total):** every genome has exactly 81,920 windowed bp; median 83 proteins (56-155) and **121 Pfam
+  families per genome (64-188)**; the earlier expectation of "tens" was wrong. A genome's window families are in its
+  whole-genome set at a median 100% (minimum 95.6%), only 6 families occur in windows alone, and the windows recover a
+  median 4.6% (2.2-10.5%) of the genome's families. That last figure is the coverage gap this control isolates.
 
 ## 6. Targets and multiplicity (D6, APPROVED)
 

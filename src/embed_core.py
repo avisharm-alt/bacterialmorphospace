@@ -846,6 +846,15 @@ def sequence_features(fasta_gz: str | Path, windows: list | None = None):
     return np.stack([genome, win])
 
 
+def window_sequences(fasta_gz: str | Path, windows: list) -> list[tuple[str, str]]:
+    """[(f"{contig}:{start}", WINDOW bp)] for each saved [contig id, start] window, exactly the sequence `sequence_features`
+    counts in its row 1: the first occurrence of a repeated contig id wins, and a window is seq[start:start + WINDOW]."""
+    seqs: dict = {}
+    for cid, seq in iter_contigs(fasta_gz):
+        seqs.setdefault(cid, seq)
+    return [(f"{cid}:{start}", seqs[cid][start:start + WINDOW]) for cid, start in windows]
+
+
 def tetra_frequencies(row):
     """136 canonical tetranucleotide frequencies from a 260-vector of counts."""
     import numpy as np
