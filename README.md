@@ -7,6 +7,14 @@ frequencies predict**?
 
 The deliverable is [`reports/attrition_report.md`](reports/attrition_report.md).
 
+**Stage 2 (initial benchmark):** [`reports/stage2_report.md`](reports/stage2_report.md) and
+[`reports/kavita_briefing_2026-10-09.md`](reports/kavita_briefing_2026-10-09.md).
+Stage 2 audits the committed species tables and evaluates prevalence and
+training-fold-only taxonomy baselines on random species and held-genus, family,
+and order splits. The optional 4-mer code is ready for assembly FASTAs, which
+are not in this checkout; there are no sequence-model results yet. Adrian's
+preliminary Evo 2 observation is **unreproduced**.
+
 **Result (BacDive API v2 snapshot of 2026-09, GTDB v232).** Bacterial trait space is sparser than independence predicts, and that
 sparsity is almost entirely phylogenetic.
 - **Core map.** 2,580 species occupy 90 of 216 six-trait cells, where independent traits would fill 117. The deficit shrinks from 27 to
@@ -216,3 +224,26 @@ data/final/     strains.parquet (joined table, gitignored), per-panel species ta
 reports/        attrition_report.md, tables/*.tsv, run_manifest.json
 notebooks/      exploration only; nothing load-bearing
 ```
+
+## Stage 2 reproduction
+
+The committed `data/final/stage2_taxonomy.tsv` adds GTDB v232 family labels and
+v220 accession membership to the union of the two Stage 1 panels. The source
+taxonomies, URLs, and hashes are in `reports/stage2_sources.json`. To rebuild it:
+
+```bash
+mkdir -p data/raw/gtdb
+curl -fsSL https://data.gtdb.ecogenomic.org/releases/release232/232.0/bac120_taxonomy_r232.tsv.gz -o data/raw/gtdb/bac120_taxonomy_r232.tsv.gz
+curl -fsSL https://data.gtdb.ecogenomic.org/releases/release220/220.0/bac120_taxonomy_r220.tsv.gz -o data/raw/gtdb/bac120_taxonomy_r220.tsv.gz
+python -m src.stage2 prepare
+python -m src.stage2 benchmark --repeats 20
+python -m pytest -q
+```
+
+The benchmark needs only the committed species tables and Stage 2 taxonomy
+mapping. Its audit and fold-level, summary, and distance tables are written to
+`reports/`. If assembly FASTAs are supplied as
+`<ncbi_assembly_accession>.fna` or `.fna.gz` in one directory, add
+`--fasta-dir PATH` to run the fixed 4-mer centroid baseline on the *same*
+splits. All assemblies for each trait panel must be present; incomplete
+sequence coverage is rejected instead of silently changing the test set.

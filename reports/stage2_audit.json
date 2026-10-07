@@ -1,0 +1,136 @@
+{
+  "core": {
+    "species": 2580,
+    "unique_genomes": 2580,
+    "gtdb_v220_exact": 2240,
+    "gtdb_v220_stem": 2244,
+    "taxa": {
+      "genus": 1235,
+      "family": 357,
+      "order": 141,
+      "class": 59,
+      "phylum": 24
+    },
+    "labels": {
+      "gram": {
+        "negative": 1428,
+        "positive": 1152
+      },
+      "shape": {
+        "rod": 2217,
+        "coccus": 227,
+        "other": 136
+      },
+      "motility": {
+        "no": 1474,
+        "yes": 1106
+      },
+      "spore": {
+        "no": 1961,
+        "yes": 619
+      },
+      "oxygen": {
+        "aerobe": 1798,
+        "facultative": 412,
+        "anaerobe": 370
+      },
+      "temperature": {
+        "meso": 2409,
+        "thermo": 147,
+        "psychro": 24
+      }
+    },
+    "label_missing": {
+      "gram": 0,
+      "shape": 0,
+      "motility": 0,
+      "spore": 0,
+      "oxygen": 0,
+      "temperature": 0
+    },
+    "match_method": {
+      "accession": 2503,
+      "designation": 77
+    },
+    "temperature_source": {
+      "optimum": 2162,
+      "growth_range": 296,
+      "growth_single_point": 122
+    },
+    "shape_other": 136,
+    "microaerophile_folded": 30
+  },
+  "no_spore": {
+    "species": 5634,
+    "unique_genomes": 5634,
+    "gtdb_v220_exact": 4993,
+    "gtdb_v220_stem": 4998,
+    "taxa": {
+      "genus": 1927,
+      "family": 459,
+      "order": 187,
+      "class": 70,
+      "phylum": 27
+    },
+    "labels": {
+      "gram": {
+        "negative": 3588,
+        "positive": 2046
+      },
+      "shape": {
+        "rod": 4780,
+        "coccus": 494,
+        "other": 360
+      },
+      "motility": {
+        "no": 3230,
+        "yes": 2404
+      },
+      "spore": {
+        "missing": 3087,
+        "no": 1935,
+        "yes": 612
+      },
+      "oxygen": {
+        "aerobe": 3917,
+        "facultative": 1131,
+        "anaerobe": 586
+      },
+      "temperature": {
+        "meso": 5392,
+        "thermo": 182,
+        "psychro": 60
+      }
+    },
+    "label_missing": {
+      "gram": 0,
+      "shape": 0,
+      "motility": 0,
+      "spore": 3087,
+      "oxygen": 0,
+      "temperature": 0
+    },
+    "match_method": {
+      "accession": 5461,
+      "designation": 173
+    },
+    "temperature_source": {
+      "optimum": 3753,
+      "growth_range": 1426,
+      "growth_single_point": 455
+    },
+    "shape_other": 360,
+    "microaerophile_folded": 150
+  },
+  "cross_panel": {
+    "shared_species": 2580,
+    "different_assembly": 32,
+    "different_labels": {
+      "gram": 1,
+      "shape": 1,
+      "motility": 4,
+      "oxygen": 4,
+      "temperature": 0
+    }
+  }
+}
