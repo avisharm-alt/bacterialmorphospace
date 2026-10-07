@@ -306,6 +306,24 @@ between folds and, once folds are pooled, biases the AUC of an uninformative fea
 against 0.48 after the fix). Within one fold or phylum a constant offset changes no AUC, so the earlier
 leave-one-phylum-out numbers are unaffected.
 
+## Leakage audit
+
+[`reports/leakage_audit.md`](reports/leakage_audit.md) lists every control against *phylogenetic leakage* (a model looking up relatives
+instead of learning trait biology), what each closes and what it gave. It also adds the one source the cross-validation controls
+cannot close, **pretraining leakage**: Evo 2 may have seen the panel genomes.
+
+- Of the 2,435 embedded genomes, **81% (1,983) are in Evo 2's GTDB training genomes, 9.8% (239) have a same-species genome in it,
+  and 8.7% (213) have no genome of their species in it.** Tables: `reports/tables/opengenome2_*.tsv`; code: `src/pretraining_overlap.py`.
+- OpenGenome2's `species_metadata.csv` lists only the release-220 additions (28,177 genomes), not the 85,205 release-214.1
+  base set, so it must be combined with GTDB's `sp_clusters_r214.tsv`. No OpenGenome2 sequence shard is needed or downloaded.
+- The LOPO and `nearclade` result JSONs are not committed, so the audit cannot quote their AUCs yet.
+
+Slides for the 2026-10-09 sync: [`reports/slides_2026-10-09.md`](reports/slides_2026-10-09.md) (figures: `python -m src.slide_figures`).
+Scoping note for a vertebrate (oVert / MorphoSource) arm: [`docs/overt_scoping.md`](docs/overt_scoping.md).
+
+**Phase 2 status.** Spec section 7 (the confirmatory contrast) is still open, so no Pfam model has been fitted to real labels
+(`docs/phase2_pfam_spec.md`).
+
 ## Layout
 
 ```
