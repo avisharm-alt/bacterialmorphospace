@@ -1788,3 +1788,96 @@ def annotate_windows(panel: str = PANEL, phyla: str = TIMING_PHYLA, n_windows: i
     print(f"{n_ok} of {len(accs)} panel genomes now have window annotations on the volume ({n_ok / len(accs):.1%})")
     if not limit and n_ok < ANNO_MIN_FRACTION * len(accs):
         raise SystemExit(f"Only {n_ok / len(accs):.1%} window-annotated (need >= {ANNO_MIN_FRACTION:.0%}); re-run to resume.")
+
+
+# ---------------------------------------------------------------------------
+# The pre-specified confirmatory table (docs/phase2_pfam_spec.md, section 7). Local only: reads the saved LOPO JSONs.
+#
+#   modal run -m src.evo2_modal::pfam_summary
+#
+# Per target the one confirmatory quantity is the macro within-phylum AUC of the `pfam` model against the within-phylum
+# shuffle null (one-sided p). Motility is the primary target, tested alone at 0.05; the three secondary targets are
+# Benjamini-Hochberg corrected across their p-values at FDR 0.05. Everything else is descriptive (paired delta-AUC CIs).
+# ---------------------------------------------------------------------------
+PFAM_PRIMARY = "motility"
+PFAM_SECONDARY = ("shape_rod", "oxygen_aerobe", "oxygen_facultative")
+PFAM_NPERM = 999
+PFAM_SUMMARY_COLS = ["target", "role", "n_genomes", "n_perm", "pfam_auc", "pfam_ci_lo", "pfam_ci_hi", "pfam_null_mean", "p", "q_bh",
+                     "positive", "pfam_windows_auc", "pfam_windows_p_descriptive", "evo2_auc", "kmer_genome_auc", "kmer_windows_auc",
+                     "gc_auc", "d_evo2_minus_pfam", "d_evo2_minus_pfam_ci", "d_evo2_minus_pfam_windows", "d_evo2_minus_pfam_windows_ci",
+                     "d_pfam_minus_kmer_genome", "d_pfam_minus_kmer_genome_ci", "d_pfamwin_minus_kmerwin", "d_pfamwin_minus_kmerwin_ci",
+                     "chosen_K_pfam", "chosen_K_pfam_windows"]
+
+
+def _pfam_summary_rows(docs: dict, alpha: float = 0.05) -> list[dict]:
+    """One row per target from the saved `_pfam` LOPO results; BH over the secondary targets only."""
+    p_sec = [docs[t]["macro"]["models"]["pfam"]["null"]["p"] for t in PFAM_SECONDARY]
+    q_sec = dict(zip(PFAM_SECONDARY, core.bh_qvalues(p_sec)))
+    rows = []
+    for t in (PFAM_PRIMARY, *PFAM_SECONDARY):
+        d, mac = docs[t], docs[t]["macro"]
+        pf, pw = mac["models"]["pfam"], mac["models"]["pfam_windows"]
+        delta = lambda k: mac["deltas"][k]  # noqa: E731
+        ci = lambda x: f"[{x['ci'][0]:+.3f},{x['ci'][1]:+.3f}]"  # noqa: E731
+        primary = t == PFAM_PRIMARY
+        q = None if primary else float(q_sec[t])
+        rows.append({
+            "target": t, "role": "primary" if primary else "secondary", "n_genomes": d["n_genomes"], "n_perm": d["n_perm"],
+            "pfam_auc": pf["auc"], "pfam_ci_lo": pf["ci"][0], "pfam_ci_hi": pf["ci"][1], "pfam_null_mean": pf["null"]["mean"],
+            "p": pf["null"]["p"], "q_bh": "" if primary else q,
+            "positive": "yes" if (pf["null"]["p"] <= alpha if primary else q <= alpha) else "no",
+            "pfam_windows_auc": pw["auc"], "pfam_windows_p_descriptive": pw["null"]["p"],
+            "evo2_auc": mac["models"]["evo2"]["auc"], "kmer_genome_auc": mac["models"]["kmer_genome"]["auc"],
+            "kmer_windows_auc": mac["models"]["kmer_windows"]["auc"], "gc_auc": mac["models"]["gc"]["auc"],
+            "d_evo2_minus_pfam": delta("evo2 - pfam")["delta"], "d_evo2_minus_pfam_ci": ci(delta("evo2 - pfam")),
+            "d_evo2_minus_pfam_windows": delta("evo2 - pfam_windows")["delta"], "d_evo2_minus_pfam_windows_ci": ci(delta("evo2 - pfam_windows")),
+            "d_pfam_minus_kmer_genome": delta("pfam - kmer_genome")["delta"], "d_pfam_minus_kmer_genome_ci": ci(delta("pfam - kmer_genome")),
+            "d_pfamwin_minus_kmerwin": delta("pfam_windows - kmer_windows")["delta"],
+            "d_pfamwin_minus_kmerwin_ci": ci(delta("pfam_windows - kmer_windows")),
+            "chosen_K_pfam": " ".join(f"{h[:5]}={d['per_phylum'][h]['models']['pfam']['K']}" for h in d["phyla"]),
+            "chosen_K_pfam_windows": " ".join(f"{h[:5]}={d['per_phylum'][h]['models']['pfam_windows']['K']}" for h in d["phyla"]),
+        })
+    return rows
+
+
+@app.local_entrypoint()
+def pfam_summary(reports: str = "reports", alpha: float = 0.05):
+    """The pre-specified confirmatory table from the four saved `evo2_lopo_<target>_pfam.json` files. Local only."""
+    import json
+
+    docs, problems = {}, []
+    for t in (PFAM_PRIMARY, *PFAM_SECONDARY):
+        path = Path(f"{reports}/tables/evo2_lopo_{t}_pfam.json")
+        if not path.exists():
+            problems.append(f"{t}: {path} is missing (run: modal run -m src.evo2_modal::lopo --pfam --target {t} --n-perm {PFAM_NPERM})")
+            continue
+        d = json.loads(path.read_text())
+        if d["n_perm"] != PFAM_NPERM:
+            problems.append(f"{t}: n_perm is {d['n_perm']}, the pre-specified confirmatory value is {PFAM_NPERM}")
+        if d.get("pfam", {}).get("min_prev") != core.PFAM_MIN_PREV:
+            problems.append(f"{t}: min_prev is {d.get('pfam', {}).get('min_prev')}, the approved value is {core.PFAM_MIN_PREV}")
+        docs[t] = d
+    if problems:
+        raise SystemExit("Cannot build the confirmatory table:\n  " + "\n  ".join(problems))
+    rows = _pfam_summary_rows(docs, alpha)
+    _write_tsv(f"{reports}/tables/pfam_lopo_summary.tsv", rows, PFAM_SUMMARY_COLS)
+    Path(f"{reports}/tables/pfam_lopo_summary.json").write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n")
+
+    print(f"PRE-SPECIFIED (docs/phase2_pfam_spec.md, section 7): confirmatory quantity = macro within-phylum AUC of the Pfam model vs the "
+          f"within-phylum shuffle null, one-sided, {PFAM_NPERM} permutations. {PFAM_PRIMARY} is primary, tested alone at {alpha}; "
+          f"{', '.join(PFAM_SECONDARY)} are Benjamini-Hochberg corrected across the three at FDR {alpha}. Everything else is descriptive.\n")
+    print(f"  {'target':<20} {'role':<10} {'Pfam macro AUC [95% CI]':<28} {'null mean':>9} {'p':>7} {'q (BH)':>7}  positive")
+    for r in rows:
+        q = "" if r["q_bh"] == "" else f"{r['q_bh']:.3f}"
+        print(f"  {r['target']:<20} {r['role']:<10} {r['pfam_auc']:.3f} [{r['pfam_ci_lo']:.3f},{r['pfam_ci_hi']:.3f}]".ljust(62)
+              + f" {r['pfam_null_mean']:>9.3f} {r['p']:>7.4f} {q:>7}  {r['positive']}")
+    print("\n  DESCRIPTIVE (macro delta-AUC, paired genus-cluster bootstrap 95% CI; no p-values)")
+    for r in rows:
+        print(f"  {r['target']:<20} evo2-pfam {r['d_evo2_minus_pfam']:+.3f} {r['d_evo2_minus_pfam_ci']} | evo2-pfam(win) "
+              f"{r['d_evo2_minus_pfam_windows']:+.3f} {r['d_evo2_minus_pfam_windows_ci']} | pfam-kmer(genome) "
+              f"{r['d_pfam_minus_kmer_genome']:+.3f} {r['d_pfam_minus_kmer_genome_ci']} | pfam(win)-kmer(win) "
+              f"{r['d_pfamwin_minus_kmerwin']:+.3f} {r['d_pfamwin_minus_kmerwin_ci']}")
+    print("\n  CHOSEN K PER HELD-OUT PHYLUM (a hyperparameter tuned by the inner leave-one-phylum-out, not a result)")
+    for r in rows:
+        print(f"  {r['target']:<20} Pfam: {r['chosen_K_pfam']}   | Pfam(windows): {r['chosen_K_pfam_windows']}")
+    print(f"\nsaved {reports}/tables/pfam_lopo_summary.tsv and .json")

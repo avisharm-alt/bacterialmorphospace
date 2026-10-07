@@ -919,6 +919,19 @@ def cluster_bootstrap(scores: dict, y, clusters, n_boot: int, rng) -> dict:
     return {m: np.asarray(v) for m, v in out.items()}
 
 
+def bh_qvalues(p):
+    """Benjamini-Hochberg adjusted p-values (q-values), in the order given: q_(i) = min_{j >= i} min(1, p_(j) m / j)."""
+    import numpy as np
+
+    p = np.asarray(p, dtype=float)
+    m = len(p)
+    order = np.argsort(p, kind="stable")
+    adj = np.minimum.accumulate((p[order] * m / np.arange(1, m + 1))[::-1])[::-1]
+    q = np.empty(m)
+    q[order] = np.minimum(adj, 1.0)
+    return q
+
+
 PFAM_MIN_PREV = 0.005  # stage-1 prevalence filter: keep families present in [0.5%, 99.5%] of the TRAINING genomes
 PFAM_KS = (100, 300, 1000, None)  # stage-2 top-K grid, tuned like C; None = every stage-1 survivor
 

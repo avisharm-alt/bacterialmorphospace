@@ -176,3 +176,81 @@ def test_window_sequences_are_exactly_the_windows_sequence_features_counts(tmp_p
         got[:256] += t
         got[256:] += m
     assert np.array_equal(got, want)
+
+
+# --- the pre-specified confirmatory table -------------------------------------------------------------------
+def test_bh_qvalues_known_values_order_and_a_naive_reference():
+    q = ec.bh_qvalues([0.01, 0.04, 0.03])
+    assert np.allclose(q, [0.03, 0.04, 0.04])  # worked by hand: 0.03, 0.045, 0.04, then the running minimum from the largest
+    assert np.allclose(ec.bh_qvalues([0.5]), [0.5])
+    assert np.allclose(ec.bh_qvalues([0.9, 0.8, 0.7]), [0.9, 0.9, 0.9])  # capped at 1 and monotone
+    rng = np.random.default_rng(0)
+    for _ in range(50):
+        p = rng.random(rng.integers(2, 9))
+        rank = lambda j: int((p <= p[j]).sum())  # noqa: E731  rank of p_j (ties take the highest rank)
+        ref = np.array([min(1.0, min(p[j] * len(p) / rank(j) for j in range(len(p)) if p[j] >= p[i])) for i in range(len(p))])
+        assert np.allclose(ec.bh_qvalues(p), ref)  # q_i = min over {j : p_j >= p_i} of p_j m / rank(p_j), capped at 1
+    assert np.all(ec.bh_qvalues(p) >= p - 1e-12)
+
+
+def _doc(p, auc=0.6, n_perm=999, min_prev=0.005):
+    ph = ["P1", "P2", "P3", "P4"]
+    delta = lambda v: {"delta": v, "ci": [v - 0.05, v + 0.05], "share_boot_positive": 0.5}  # noqa: E731
+    model = lambda a, pp: {"auc": a, "ci": [a - 0.03, a + 0.03], "null": {"mean": 0.5, "sd": 0.02, "q95": 0.53, "p": pp}}  # noqa: E731
+    return {"phyla": ph, "n_genomes": 2435, "n_perm": n_perm, "pfam": {"min_prev": min_prev},
+            "macro": {"models": {"pfam": model(auc, p), "pfam_windows": model(0.52, 0.2), "evo2": model(0.55, 0.1),
+                                 "kmer_genome": model(0.52, 0.3), "kmer_windows": model(0.54, 0.2), "gc": model(0.58, 0.05)},
+                      "deltas": {k: delta(0.01) for k in ("evo2 - pfam", "evo2 - pfam_windows", "pfam - kmer_genome",
+                                                          "pfam_windows - kmer_windows")}},
+            "per_phylum": {h: {"models": {"pfam": {"K": 100}, "pfam_windows": {"K": "all"}}} for h in ph}}
+
+
+def _summary_files(tmp_path, p_by_target, **kw):
+    import json
+
+    (tmp_path / "tables").mkdir(exist_ok=True)
+    for t, p in p_by_target.items():
+        json.dump(_doc(p, **kw), open(tmp_path / "tables" / f"evo2_lopo_{t}_pfam.json", "w"))
+
+
+def test_pfam_summary_applies_bh_across_the_three_secondary_targets_only(tmp_path, capsys):
+    import csv
+
+    m = pytest.importorskip("modal") and __import__("src.evo2_modal", fromlist=["x"])
+    _summary_files(tmp_path, {"motility": 0.001, "shape_rod": 0.004, "oxygen_aerobe": 0.02, "oxygen_facultative": 0.30})
+    m.pfam_summary.info.raw_f(reports=str(tmp_path))
+    rows = {r["target"]: r for r in csv.DictReader(open(tmp_path / "tables" / "pfam_lopo_summary.tsv"), delimiter="\t")}
+    assert rows["motility"]["role"] == "primary" and rows["motility"]["q_bh"] == "" and rows["motility"]["positive"] == "yes"
+    # BH over {0.004, 0.02, 0.30}: q = 0.012, 0.03, 0.30. Had motility (0.001) been in the family (m = 4) shape_rod's q would be 0.008.
+    assert [round(float(rows[t]["q_bh"]), 3) for t in m.PFAM_SECONDARY] == [0.012, 0.03, 0.3]
+    assert [rows[t]["positive"] for t in m.PFAM_SECONDARY] == ["yes", "yes", "no"]
+    out = capsys.readouterr().out
+    assert "primary, tested alone" in out or "is primary, tested alone" in out
+    assert "Benjamini-Hochberg corrected across the three" in out and "DESCRIPTIVE" in out and "CHOSEN K PER HELD-OUT PHYLUM" in out
+
+
+def test_pfam_summary_primary_is_judged_alone_and_a_secondary_with_a_small_raw_p_can_fail_bh(tmp_path):
+    import csv
+
+    m = pytest.importorskip("modal") and __import__("src.evo2_modal", fromlist=["x"])
+    _summary_files(tmp_path, {"motility": 0.06, "shape_rod": 0.03, "oxygen_aerobe": 0.04, "oxygen_facultative": 0.045})
+    m.pfam_summary.info.raw_f(reports=str(tmp_path))
+    rows = {r["target"]: r for r in csv.DictReader(open(tmp_path / "tables" / "pfam_lopo_summary.tsv"), delimiter="\t")}
+    assert rows["motility"]["positive"] == "no"  # 0.06 > 0.05, no correction applied to the primary
+    assert [rows[t]["positive"] for t in m.PFAM_SECONDARY] == ["yes", "yes", "yes"]  # q = 0.045 for all three (<= 0.05)
+
+
+@pytest.mark.parametrize("kw, needle", [({"n_perm": 50}, "n_perm is 50"), ({"min_prev": 0.01}, "min_prev is 0.01")])
+def test_pfam_summary_refuses_runs_that_differ_from_the_pre_specification(tmp_path, kw, needle):
+    m = pytest.importorskip("modal") and __import__("src.evo2_modal", fromlist=["x"])
+    _summary_files(tmp_path, {"motility": 0.01, "shape_rod": 0.01, "oxygen_aerobe": 0.01, "oxygen_facultative": 0.01}, **kw)
+    with pytest.raises(SystemExit, match=needle):
+        m.pfam_summary.info.raw_f(reports=str(tmp_path))
+    assert not (tmp_path / "tables" / "pfam_lopo_summary.tsv").exists()
+
+
+def test_pfam_summary_refuses_when_a_target_is_missing(tmp_path):
+    m = pytest.importorskip("modal") and __import__("src.evo2_modal", fromlist=["x"])
+    _summary_files(tmp_path, {"motility": 0.01, "shape_rod": 0.01, "oxygen_aerobe": 0.01})
+    with pytest.raises(SystemExit, match="oxygen_facultative.*is missing"):
+        m.pfam_summary.info.raw_f(reports=str(tmp_path))
