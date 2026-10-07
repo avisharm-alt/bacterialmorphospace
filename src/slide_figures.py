@@ -180,47 +180,59 @@ def fig_pretraining(tables: str | Path, out: str | Path) -> None:
     plt.close(fig)
 
 
-LOPO_MODELS = (("evo2", "Evo 2", BLUE), ("kmer_genome", "k-mer (whole genome)", ORANGE),
-               ("kmer_windows", "k-mer (Evo 2 windows)", AQUA), ("gc", "GC only", YELLOW))
+# display order, top to bottom; models absent from a result file are skipped
+LOPO_MODELS = (("pfam", "Pfam (whole genome)"), ("pfam_windows", "Pfam (Evo 2 windows)"), ("evo2", "Evo 2"),
+               ("kmer_genome", "k-mer (whole genome)"), ("kmer_windows", "k-mer (Evo 2 windows)"), ("gc", "GC only"))
 
 
 def lopo_points(d: dict) -> list[dict]:
-    """One row per (held-out phylum or MACRO, model) from an `evo2_lopo_<target>.json` result."""
+    """One row per (held-out phylum or macro mean, model) from an `evo2_lopo_<target>*.json` result."""
+    present = set(d["models"])
     rows = []
-    for h in d["phyla"]:
-        for k, label, _ in LOPO_MODELS:
+    for k, _ in LOPO_MODELS:
+        if k not in present:
+            continue
+        for h in d["phyla"]:
             m = d["per_phylum"][h]["models"][k]
             rows.append({"group": h, "model": k, "auc": m["auc"], "lo": m["ci"][0], "hi": m["ci"][1]})
-    for k, label, _ in LOPO_MODELS:
         m = d["macro"]["models"][k]
         rows.append({"group": "macro mean", "model": k, "auc": m["auc"], "lo": m["ci"][0], "hi": m["ci"][1]})
     return rows
 
 
 def fig_lopo(json_path: str | Path, out: str | Path, target: str = "motility") -> None:
+    """Small multiples: one panel per held-out phylum plus the macro mean, one row per model (identity is the row label,
+    so a single colour is enough). Descriptive: nothing here is a test."""
     import json
 
     plt = _plt()
     d = json.load(open(json_path))
     pts = pd.DataFrame(lopo_points(d))
+    labels = dict(LOPO_MODELS)
+    models = [k for k, _ in LOPO_MODELS if k in set(pts["model"])]
     groups = list(dict.fromkeys(pts["group"]))
-    fig, ax = plt.subplots(figsize=(10, 4.8))
-    off = {k: (i - 1.5) * 0.15 for i, (k, _, _) in enumerate(LOPO_MODELS)}
-    for k, label, color in LOPO_MODELS:
-        s = pts[pts["model"] == k]
-        xs = [groups.index(g) + off[k] for g in s["group"]]
-        ax.vlines(xs, s["lo"], s["hi"], color=color, lw=2)
-        ax.scatter(xs, s["auc"], s=70, color=color, edgecolor=SURFACE, linewidth=2, zorder=3, label=label)
-    ax.axhline(0.5, color=INK2, lw=1)
-    ax.text(-0.45, 0.503, "chance (0.5)", ha="left", va="bottom", fontsize=9, color=INK2)
-    ax.set_xticks(range(len(groups)))
-    ax.set_xticklabels(groups)
-    ax.set_ylabel("AUC within the held-out phylum")
-    ax.yaxis.grid(True, color=GRID, lw=1)
-    ax.set_axisbelow(True)
-    ax.legend(frameon=False, ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.1), fontsize=10)
+    lo, hi = max(0.0, pts["lo"].min() - 0.03), min(1.0, pts["hi"].max() + 0.03)
+    fig, axes = plt.subplots(1, len(groups), figsize=(12, 4.6), sharey=True, sharex=True)
+    for ax, g in zip(axes, groups):
+        s = pts[pts["group"] == g].set_index("model").loc[models]
+        ys = list(range(len(models)))[::-1]
+        ax.hlines(ys, s["lo"], s["hi"], color=BLUE, lw=2)
+        ax.scatter(s["auc"], ys, s=70, color=BLUE, edgecolor=SURFACE, linewidth=2, zorder=3)
+        ax.axvline(0.5, color=INK2, lw=1)
+        ax.set_xlim(lo, hi)
+        ax.xaxis.grid(True, color=GRID, lw=1)
+        ax.set_axisbelow(True)
+        ax.set_ylim(-0.6, len(models) - 0.25)  # headroom so the top row's value label clears the panel title
+        ax.set_title(g, fontsize=10.5, color=INK, loc="left", pad=14)
+        ax.tick_params(axis="y", length=0)
+        ax.spines["left"].set_visible(False)
+        for y, v in zip(ys, s["auc"]):
+            ax.text(v, y + 0.28, f"{v:.2f}", ha="center", va="bottom", fontsize=8.5, color=INK2)
+    axes[0].set_yticks(list(range(len(models)))[::-1])
+    axes[0].set_yticklabels([labels[k] for k in models])
+    fig.supxlabel("AUC inside the held-out phylum (0.5 = chance)", fontsize=10, color=INK2)
     _title(fig, f"Leave-one-phylum-out, {target}: AUC inside the held-out phylum",
-           "Trained on the other three phyla. Bars: 95% genus-cluster bootstrap interval.")
+           "Descriptive. Trained on the other three phyla; bars are 95% genus-cluster bootstrap intervals.")
     fig.savefig(out, dpi=170)
     plt.close(fig)
 

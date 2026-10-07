@@ -12,22 +12,52 @@ seen the test genomes).
 
 | control | leakage it closes | what it does not close | status | result |
 |---|---|---|---|---|
-| **LOPO scored within the held-out phylum** (`lopo`) | Relatives of the test genome in training: the whole test phylum is absent from training. Phylum-identity shortcut: AUC is computed inside the held-out phylum only, so telling Bacillota from Pseudomonadota earns nothing. | Anything shared across phyla (convergent traits learned from other phyla are legitimate signal). Pretraining (section 3). | Run, depth 10, four phyla, 2,435 genomes. | Evo 2 is near chance across phyla. **Numbers not in the repo** (see 1a). |
+| **LOPO scored within the held-out phylum** (`lopo`) | Relatives of the test genome in training: the whole test phylum is absent from training. Phylum-identity shortcut: AUC is computed inside the held-out phylum only, so telling Bacillota from Pseudomonadota earns nothing. | Anything shared across phyla (convergent traits learned from other phyla are legitimate signal). Pretraining (section 3). | Run, depth 10, four phyla, 2,435 genomes. | Motility: Evo 2 macro AUC 0.545 [0.50, 0.58], per phylum 0.41 to 0.68. Near chance on motility, `shape_rod` and `oxygen_facultative`, **not on `oxygen_aerobe` (0.753)**. Table in 1a. |
 | **`nearclade`** (leave-genus-out within phylum, AUC by taxonomic distance to the nearest training genome) | Same-genus near-copies. Reports how AUC decays as the nearest training relative gets more distant, which separates lookup from transfer. | A relative in the same family still lets a model look up. That is the point of the decay curve, not a flaw. | Run. | Evo 2 predicts within clade. **Numbers not in the repo** (see 1a). |
 | **Taxonomy-prior baseline** (`tax_prior` in `nearclade`) | Diagnostic, not a fix: trait prevalence among training genomes in the nearest shared taxon (family, then order, class, phylum). Any model that cannot beat it has learned lookup, not biology. | | Run. | Taxonomy alone predicts as well as the genome. **Numbers not in the repo** (see 1a). |
-| **Within-phylum and within-order shuffle nulls** | A model that has learned only phylum or order prevalence. Labels are permuted inside each phylum (`lopo`) or inside each phylum and each order (`nearclade`, order prevalence kept) and the model is refitted, so the null AUC includes whatever taxonomic structure a model can exploit. | Structure below order (family, genus) in the order-level null. | Run (code defaults: 50 phylum shuffles, 30 order shuffles). | **Numbers not in the repo** (see 1a). |
-| **Genus-cluster bootstrap** | Pseudo-replication in the uncertainty: genomes of one genus are near-copies, so a genome-level bootstrap is too narrow. Paired differences use the same resampled genera. | Does not change a point estimate. | Run (code defaults: 1,000 resamples in `lopo`, 200 in `nearclade`). | Intervals are in the result JSONs, not committed. |
-| **In-fold feature selection** (Pfam two-stage filter, `docs/phase2_pfam_spec.md` section 4) | Label information from the held-out phylum reaching feature choice. Both stages (prevalence, then Cochran-Mantel-Haenszel top-K) are fit on training phyla only, again inside every inner tuning fold, and refit on the permuted labels in the shuffle null. | Spec section 7 (the confirmatory contrast) is still open. | Implemented and unit-tested: the selector never sees the held-out phylum and is refit on permuted labels in the null (`tests/test_pfam_filter.py`); no genus crosses `nearclade` folds (`tests/test_embed_core.py`). **Not yet fitted to real labels**; no `lopo --smoke` output is committed. | None yet. |
-| **Inner leave-one-phylum-out tuning of C (and K)** | Tuning regularisation on the held-out phylum. C and K are chosen on the training phyla only. | | Run. | Chosen C per fold is in the result JSON, not committed. |
+| **Within-phylum and within-order shuffle nulls** | A model that has learned only phylum or order prevalence. Labels are permuted inside each phylum (`lopo`) or inside each phylum and each order (`nearclade`, order prevalence kept) and the model is refitted, so the null AUC includes whatever taxonomic structure a model can exploit. | Structure below order (family, genus) in the order-level null. | `lopo` phylum shuffle: run, 999 permutations. `nearclade` order shuffle: run, number of permutations unknown. | `lopo`: the null mean is 0.499 to 0.501 for every model on all four targets, so the refit pipeline does not manufacture signal. `nearclade` order-level null: **not in the repo**. |
+| **Genus-cluster bootstrap** | Pseudo-replication in the uncertainty: genomes of one genus are near-copies, so a genome-level bootstrap is too narrow. Paired differences use the same resampled genera. | Does not change a point estimate. | `lopo`: run, 1,000 resamples. `nearclade`: 200 by default, result not in the repo. | `lopo` intervals are in table 1a. |
+| **In-fold feature selection** (Pfam two-stage filter, `docs/phase2_pfam_spec.md` section 4) | Label information from the held-out phylum reaching feature choice. Both stages (prevalence, then Cochran-Mantel-Haenszel top-K) are fit on training phyla only, again inside every inner tuning fold, and refit on the permuted labels in the shuffle null. | The two branches define the confirmatory contrast differently (see 1a), so these results are descriptive until that is settled. | Implemented and unit-tested: the selector never sees the held-out phylum and is refit on permuted labels in the null (`tests/test_pfam_filter.py`); no genus crosses `nearclade` folds (`tests/test_embed_core.py`). Run on real labels in another session (999 permutations, all four targets). | Table 1a. Chosen K and stage-1 survivors per fold are in the result JSONs (motility: K = 1000, 300, 100, 300 and 9,947 to 11,187 survivors per held-out phylum). |
+| **Inner leave-one-phylum-out tuning of C (and K)** | Tuning regularisation on the held-out phylum. C and K are chosen on the training phyla only. | | Run. | Chosen C per fold is in the result JSONs. Motility, Evo 2: 1, 0.1, 0.0001, 0.1 for Actinomycetota, Bacillota, Bacteroidota, Pseudomonadota. |
 | **Intercept-free pooled scores** (`nearclade`) | A pooled-AUC artefact: fold intercepts encode training prevalence, which biases the pooled AUC of an uninformative feature below 0.5 (0.40 in a simulation, 0.48 after the fix). | | Run. | README, "Other traits and near-clade prediction". |
 
-### 1a. Where the LOPO and nearclade numbers are
+### 1a. Leave-one-phylum-out results (descriptive)
 
-`lopo` and `nearclade` write `reports/tables/evo2_lopo_<target>.json` and `reports/tables/evo2_nearclade_<target>.json`
-into the checkout that launched them. Neither file is on any branch of this repository, so this audit cannot quote an AUC,
-a confidence interval, a null or a chosen C. The three results in the table are the ones reported in the project
-discussion (Evo 2 near chance across phyla; predictive within clade; taxonomy alone as good as the genome). Committing those
-JSON files, which are results and not data, closes this gap. Then fill the "result" column from them.
+The `lopo` result JSONs for the four targets (run in a separate session, 999 within-phylum shuffles, 1,000 genus-cluster
+resamples, depth 10, 2,435 genomes) were brought in from `origin/claude/optimistic-newton-6lf55q` at `5fa0250`:
+`reports/tables/evo2_lopo_<target>_pfam.json` and `pfam_lopo_summary.tsv`. **The `nearclade` JSONs are still not in the
+repository**, so the leave-genus-out decay curve and the taxonomy-prior baseline have no numbers here, and "taxonomy alone predicts as well as the genome" is not
+checked by this audit.
+
+**These numbers are descriptive.** The two branches record the confirmatory contrast differently: the Pfam spec on that
+branch fixes "macro Pfam AUC above the within-phylum shuffle null, 999 permutations", and the spec on this branch records
+`pfam` minus `kmer_genome` (D7). That conflict is unresolved, so nothing below is called confirmatory or a headline.
+
+Macro mean over the four held-out phyla of the AUC inside each phylum, with the 95% genus-cluster bootstrap interval:
+
+| target | Pfam | Pfam (Evo 2 windows) | Evo 2 | k-mer (whole genome) | k-mer (Evo 2 windows) | GC only |
+|---|---|---|---|---|---|---|
+| motility | 0.752 [0.711, 0.791] | 0.590 [0.556, 0.622] | 0.545 [0.502, 0.582] | 0.524 [0.483, 0.566] | 0.543 [0.499, 0.582] | 0.585 [0.536, 0.629] |
+| shape_rod | 0.617 [0.559, 0.671] | 0.516 [0.459, 0.570] | 0.476 [0.419, 0.538] | 0.519 [0.448, 0.582] | 0.502 [0.441, 0.560] | 0.492 [0.431, 0.559] |
+| oxygen_aerobe | 0.891 [0.861, 0.913] | 0.764 [0.731, 0.792] | 0.753 [0.711, 0.785] | 0.447 [0.410, 0.487] | 0.473 [0.435, 0.512] | 0.590 [0.552, 0.627] |
+| oxygen_facultative | 0.597 [0.548, 0.659] | 0.520 [0.481, 0.561] | 0.507 [0.434, 0.561] | 0.641 [0.586, 0.692] | 0.622 [0.556, 0.675] | 0.563 [0.503, 0.610] |
+
+Four plainly labelled comparisons, paired differences in macro AUC with 95% intervals (`pfam_lopo_summary.tsv`):
+
+| target | Pfam vs shuffle null (macro AUC, null mean, p) | Pfam minus k-mer (whole genome) | Evo 2 minus Pfam | Evo 2 minus Pfam (Evo 2 windows) | Pfam (windows) minus k-mer (windows) |
+|---|---|---|---|---|---|
+| motility | 0.752, 0.501, 0.001 | +0.228 [+0.176, +0.278] | -0.208 [-0.263, -0.153] | -0.046 [-0.091, -0.002] | +0.048 [-0.009, +0.102] |
+| shape_rod | 0.617, 0.500, 0.001 | +0.098 [+0.030, +0.173] | -0.141 [-0.215, -0.058] | -0.040 [-0.111, +0.032] | +0.014 [-0.048, +0.080] |
+| oxygen_aerobe | 0.891, 0.501, 0.001 | +0.444 [+0.393, +0.486] | -0.138 [-0.171, -0.110] | -0.011 [-0.046, +0.021] | +0.291 [+0.238, +0.337] |
+| oxygen_facultative | 0.597, 0.501, 0.001 | -0.044 [-0.117, +0.045] | -0.090 [-0.194, -0.011] | -0.013 [-0.101, +0.057] | -0.103 [-0.169, -0.024] |
+
+p = 0.001 is the smallest value 999 permutations can give.
+
+Two things in these numbers bear on the audit. First, the earlier summary "Evo 2 drops to chance across phyla" holds for motility
+(0.545), `shape_rod` and `oxygen_facultative`, but not for `oxygen_aerobe` (0.753), and on motility Evo 2 is above chance in
+Bacillota (0.675 [0.62, 0.73]) and below it in Actinomycetota (0.407 [0.30, 0.51]), so a macro mean hides large differences between
+phyla. Second, GC content alone (0.585) is ahead of Evo 2 on motility, which is what a simple composition baseline is there to show.
+Neither point is a leakage test; both are context for reading the table.
 
 ## 2. Occupancy nulls (the same idea, applied to the map)
 

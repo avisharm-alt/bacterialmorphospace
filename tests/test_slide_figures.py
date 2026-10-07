@@ -38,16 +38,21 @@ def test_tier_shares_are_computed_from_counts_and_sum_to_one(tmp_path):
     assert all(abs(s - 1.0) < 1e-9 for s in d[["share_genome_seen", "share_species_seen", "share_unseen"]].sum(axis=1))
 
 
-def _lopo_json():
-    models = {k: {"auc": 0.5 + 0.02 * i, "ci": [0.4, 0.62]} for i, (k, _, _) in enumerate(sf.LOPO_MODELS)}
-    return {"phyla": ["P1", "P2"], "per_phylum": {h: {"models": models} for h in ("P1", "P2")}, "macro": {"models": models}}
+def _lopo_json(models=("evo2", "kmer_genome", "gc")):
+    m = {k: {"auc": 0.5 + 0.02 * i, "ci": [0.4, 0.62]} for i, k in enumerate(models)}
+    return {"phyla": ["P1", "P2"], "models": list(models), "per_phylum": {h: {"models": m} for h in ("P1", "P2")}, "macro": {"models": m}}
 
 
-def test_lopo_points_cover_every_phylum_and_the_macro_mean_for_every_model():
+def test_lopo_points_cover_every_present_model_in_every_phylum_and_the_macro_mean():
     pts = sf.lopo_points(_lopo_json())
-    assert len(pts) == (2 + 1) * len(sf.LOPO_MODELS)
-    assert {p["group"] for p in pts} == {"P1", "P2", "macro mean"}
+    assert len(pts) == (2 + 1) * 3
+    assert {p["group"] for p in pts} == {"P1", "P2", "macro mean"} and {p["model"] for p in pts} == {"evo2", "kmer_genome", "gc"}
     assert all(p["lo"] <= p["auc"] <= p["hi"] for p in pts)
+
+
+def test_lopo_points_ignore_models_that_are_not_plotted():
+    d = _lopo_json(("evo2", "evo2_C1"))  # the untuned C=1 variant is in every result file and is not a plotted model
+    assert {p["model"] for p in sf.lopo_points(d)} == {"evo2"}
 
 
 def test_every_figure_renders_to_a_nonempty_png(tmp_path):
@@ -58,5 +63,6 @@ def test_every_figure_renders_to_a_nonempty_png(tmp_path):
         assert out.stat().st_size > 10_000
     j = tmp_path / "lopo.json"
     j.write_text(json.dumps(_lopo_json()))
+    j.write_text(json.dumps(_lopo_json(("pfam", "pfam_windows", "evo2", "kmer_genome", "kmer_windows", "gc"))))
     sf.fig_lopo(j, tmp_path / "lopo.png")
     assert (tmp_path / "lopo.png").stat().st_size > 10_000

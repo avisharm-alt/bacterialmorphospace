@@ -1,6 +1,6 @@
 # Phase 2 spec: Pfam presence/absence as the fifth LOPO model
 
-Status: **APPROVED decisions D1-D6 and D7 (the confirmatory contrast, section 7, decided 2026-10-07).** This file is
+Status: **APPROVED decisions D1-D6. D7 (the confirmatory contrast, section 7) is recorded but disputed: see the erratum there.** This file is
 committed before any Pfam model is fitted to labels, so the pre-specification below is timestamped by git history.
 
 ## 1. Question
@@ -76,8 +76,16 @@ comes out positive" for the primary test and for the BH family. The answer is re
 **Decision (D7), 2026-10-07, by the project owner: option A.** The single confirmatory contrast is the macro mean over the four
 held-out phyla of AUC(`pfam`) minus AUC(`kmer_genome`), within-phylum. "Annotation comes out positive" means this difference is
 positive with the p-value defined below at alpha = 0.05 for motility, and BH-corrected at 0.05 across the three secondary targets.
-Options B and C were not chosen; their pairings are reported as descriptive only. No Pfam model had been fitted to real labels
-when this was recorded.
+Options B and C were not chosen; their pairings are reported as descriptive only.
+
+**Erratum (added 2026-10-07 after 03:56 UTC).** The sentence that stood here, that no Pfam model had been fitted to real labels
+when D7 was recorded, described only what this session knew and was wrong as a statement of fact. D7 was committed at
+02:59 UTC. On `origin/claude/optimistic-newton-6lf55q`, a different session had committed a spec fixing a different confirmatory
+quantity (macro Pfam AUC above the within-phylum shuffle null, 999 permutations) at 02:25 UTC, before any fit, and had committed
+its first real-label result at 02:55 UTC, so real-label results already existed when D7 was recorded. D7 is therefore not a
+pre-specification in the sense this spec requires, and `pfam` minus `kmer_genome` must not be presented as a confirmatory
+contrast. Which definition governs is not decided here; the project owner needs to settle it. Until then every Pfam number is
+descriptive (`reports/leakage_audit.md`, section 1a).
 
 Common to every option (so the choice is only about which pair of models):
 - Statistic: the macro mean over the four held-out phyla of the within-phylum AUC difference, as `lopo` already reports it (`deltas` in the result JSON).

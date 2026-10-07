@@ -316,13 +316,16 @@ cannot close, **pretraining leakage**: Evo 2 may have seen the panel genomes.
   and 8.7% (213) have no genome of their species in it.** Tables: `reports/tables/opengenome2_*.tsv`; code: `src/pretraining_overlap.py`.
 - OpenGenome2's `species_metadata.csv` lists only the release-220 additions (28,177 genomes), not the 85,205 release-214.1
   base set, so it must be combined with GTDB's `sp_clusters_r214.tsv`. No OpenGenome2 sequence shard is needed or downloaded.
-- The LOPO and `nearclade` result JSONs are not committed, so the audit cannot quote their AUCs yet.
+- The `lopo` result JSONs for four targets are committed (`reports/tables/evo2_lopo_<target>_pfam.json`) and the audit quotes them as
+  descriptive results. The `nearclade` JSONs are not committed, so the decay curve and taxonomy-prior baseline have no numbers yet.
 
 Slides for the 2026-10-09 sync: [`reports/slides_2026-10-09.md`](reports/slides_2026-10-09.md) (figures: `python -m src.slide_figures`).
 Scoping note for a vertebrate (oVert / MorphoSource) arm: [`docs/overt_scoping.md`](docs/overt_scoping.md).
 
-**Phase 2 status.** Spec section 7 is decided (D7: the confirmatory contrast is `pfam` minus `kmer_genome`, 2026-10-07). No Pfam model
-has been fitted to real labels yet: next is `lopo --pfam --smoke`, then motility (`docs/phase2_pfam_spec.md`, section 8).
+**Phase 2 status.** Pfam LOPO results for all four targets exist (run in a separate session; `reports/tables/evo2_lopo_<target>_pfam.json`,
+`pfam_lopo_summary.tsv`). They are descriptive only: the two branches define the confirmatory contrast differently, and D7 here was
+recorded after real-label results existed (erratum in `docs/phase2_pfam_spec.md`, section 7). The owner has to settle which
+definition governs. Numbers: `reports/leakage_audit.md`, section 1a.
 
 ## Layout
 
