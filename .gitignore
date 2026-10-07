@@ -16,3 +16,8 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 .venv/
+
+# OpenGenome2 / GTDB metadata used by src/pretraining_overlap.py (re-downloadable; see reports/leakage_audit.md)
+og2/
+species_metadata.csv
+sp_clusters*.tsv

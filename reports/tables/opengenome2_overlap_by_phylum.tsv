@@ -1,0 +1,6 @@
+gtdb_phylum	n	genome_seen	species_seen	unseen	share_genome_seen	share_species_seen	share_unseen
+Actinomycetota	481	354	58	69	0.736	0.1206	0.1435
+Bacillota	732	611	73	48	0.8347	0.0997	0.0656
+Bacteroidota	409	337	35	37	0.824	0.0856	0.0905
+Pseudomonadota	813	681	73	59	0.8376	0.0898	0.0726
+all	2435	1983	239	213	0.8144	0.0982	0.0875

@@ -1,0 +1,9 @@
+definition	phylum	n	n_unseen	n_unseen_genera	motility_pos_unseen	motility_neg_unseen	motility_prev_unseen	motility_prev_rest	oxygen_aerobe_pos_unseen	oxygen_aerobe_neg_unseen	oxygen_aerobe_prev_unseen	oxygen_aerobe_prev_rest	oxygen_facultative_pos_unseen	oxygen_facultative_neg_unseen	oxygen_facultative_prev_unseen	oxygen_facultative_prev_rest	shape_rod_pos_unseen	shape_rod_neg_unseen	shape_rod_prev_unseen	shape_rod_prev_rest
+unseen_species	Actinomycetota	481	69	45	11	58	0.159	0.078	66	3	0.957	0.828	2	67	0.029	0.092	50	19	0.725	0.74
+unseen_species	Bacillota	732	48	35	32	16	0.667	0.566	36	12	0.75	0.431	8	40	0.167	0.31	41	7	0.854	0.849
+unseen_species	Bacteroidota	409	37	26	10	27	0.27	0.175	37	0	1.0	0.769	0	37	0.0	0.056	36	1	0.973	0.976
+unseen_species	Pseudomonadota	813	59	51	36	23	0.61	0.646	51	8	0.864	0.834	8	51	0.136	0.145	55	4	0.932	0.905
+not_genome_seen	Actinomycetota	481	127	67	14	113	0.11	0.082	117	10	0.921	0.819	4	123	0.031	0.102	91	36	0.717	0.746
+not_genome_seen	Bacillota	732	121	88	78	43	0.645	0.558	66	55	0.545	0.434	32	89	0.264	0.308	100	21	0.826	0.854
+not_genome_seen	Bacteroidota	409	72	43	14	58	0.194	0.181	65	7	0.903	0.766	1	71	0.014	0.059	71	1	0.986	0.973
+not_genome_seen	Pseudomonadota	813	132	96	82	50	0.621	0.648	112	20	0.848	0.834	20	112	0.152	0.142	121	11	0.917	0.905
