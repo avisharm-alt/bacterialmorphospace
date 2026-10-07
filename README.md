@@ -321,8 +321,8 @@ cannot close, **pretraining leakage**: Evo 2 may have seen the panel genomes.
 Slides for the 2026-10-09 sync: [`reports/slides_2026-10-09.md`](reports/slides_2026-10-09.md) (figures: `python -m src.slide_figures`).
 Scoping note for a vertebrate (oVert / MorphoSource) arm: [`docs/overt_scoping.md`](docs/overt_scoping.md).
 
-**Phase 2 status.** Spec section 7 (the confirmatory contrast) is still open, so no Pfam model has been fitted to real labels
-(`docs/phase2_pfam_spec.md`).
+**Phase 2 status.** Spec section 7 is decided (D7: the confirmatory contrast is `pfam` minus `kmer_genome`, 2026-10-07). No Pfam model
+has been fitted to real labels yet: next is `lopo --pfam --smoke`, then motility (`docs/phase2_pfam_spec.md`, section 8).
 
 ## Layout
 
