@@ -456,7 +456,7 @@ def build_report(cfg: Config) -> str:
             save(f"survivor_{k}_{'_'.join(str(cell[x]) for x in t)}_order_contributions", contrib)
 
     # ---------------------------------------------------------------- deliverables & manifest
-    keep = ["bacdive_id", "species", "gtdb_species", "gtdb_genus", "gtdb_order", "gtdb_class", "gtdb_phylum", "gtdb_accession",
+    keep = ["bacdive_id", "species", "gtdb_species", "gtdb_genus", "gtdb_family", "gtdb_order", "gtdb_class", "gtdb_phylum", "gtdb_accession",
             "ncbi_assembly_accession", "assembly_genbank", "assembly_refseq", "match_method", "type_strain_bacdive",
             "gtdb_is_type_strain_of_species"] + [c for t in core for c in (t, f"{t}_fine")] + [
             "temperature_bin_source", "temperature_point", "oxygen_microaerophile_folded", "ph", "ph_bin_source", "halophily_level"]

@@ -7,6 +7,16 @@ frequencies predict**?
 
 The deliverable is [`reports/attrition_report.md`](reports/attrition_report.md).
 
+Stage 2 has an initial, leakage-aware prevalence and taxonomy benchmark on the committed
+species tables. See [`reports/stage2_report.md`](reports/stage2_report.md) for results,
+limitations, and the October 9 briefing. Reproduce the current run with
+`.venv/bin/python -m src.stage2`; it writes `reports/stage2/`. Supply the exact GTDB v232
+metadata snapshot with `--gtdb-metadata` to enable held-out family splits, and
+accession-named genome FASTAs with `--genomes` to enable the fixed 4-mer baseline.
+Use `--accessions` with a newline-delimited subset of the panel's exact assembly
+accessions for a smaller, common-input genome comparison.
+The Stage 2 command never downloads genomes or the OpenGenome2 corpus.
+
 **Result (BacDive API v2 snapshot of 2026-09, GTDB v232).** Bacterial trait space is sparser than independence predicts, and that
 sparsity is almost entirely phylogenetic.
 - **Core map.** 2,580 species occupy 90 of 216 six-trait cells, where independent traits would fill 117. The deficit shrinks from 27 to

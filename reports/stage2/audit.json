@@ -1,0 +1,72 @@
+{
+  "panel_inputs": {
+    "data/final/core_panel_species.tsv": "7ee69db6e48134e3cecb2e175af38281b3f485bf3e695ea83d56196e1bbfe1f2",
+    "data/final/no_spore_panel_species.tsv": "c991b33af7d4b0282c3002f8568008e504084fc6720b2f383b18ba74ba06afb9"
+  },
+  "species_union": 5634,
+  "species_evaluated": 5634,
+  "accession_subset_sha256": null,
+  "family_available": false,
+  "duplicate_species": 0,
+  "shared_panel_species": 2580,
+  "panel_disagreements": {
+    "ncbi_assembly_accession": 32,
+    "assembly_genbank": 32,
+    "gram": 1,
+    "shape": 1,
+    "motility": 4,
+    "spore": 33,
+    "oxygen": 4,
+    "temperature": 0
+  },
+  "duplicate_refseq_or_genbank": 0,
+  "duplicate_genbank": 0,
+  "taxonomy": {
+    "genus": 1927,
+    "order": 187,
+    "class": 70,
+    "phylum": 27
+  },
+  "traits": {
+    "gram": {
+      "negative": 3587,
+      "positive": 2047
+    },
+    "shape": {
+      "rod": 4779,
+      "coccus": 495,
+      "other": 360
+    },
+    "motility": {
+      "no": 3230,
+      "yes": 2404
+    },
+    "spore": {
+      "nan": 3054,
+      "no": 1961,
+      "yes": 619
+    },
+    "oxygen": {
+      "aerobe": 3915,
+      "facultative": 1133,
+      "anaerobe": 586
+    },
+    "temperature": {
+      "meso": 5392,
+      "thermo": 182,
+      "psychro": 60
+    }
+  },
+  "genomes_loaded": false,
+  "seed": 20261007,
+  "folds": 5,
+  "repeats": 5,
+  "taxonomy_min_count": 5,
+  "python": "3.12.14",
+  "pandas": "3.0.6",
+  "numpy": "2.5.3",
+  "config_sha256": "96c49f9e4f4adf88c7fc3f37555528460db034b3ece56c5af2b8abfceacaa5a1",
+  "pretraining_overlap": {
+    "status": "not_checked_no_manifest"
+  }
+}
