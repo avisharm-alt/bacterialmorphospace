@@ -1,6 +1,6 @@
 # Phase 2 spec: Pfam presence/absence as the fifth LOPO model
 
-Status: **APPROVED decisions D1-D6 (below); one item still open (section 7, the confirmatory contrast).** This file is
+Status: **APPROVED decisions D1-D6 and D7 (the confirmatory contrast, section 7, decided 2026-10-07).** This file is
 committed before any Pfam model is fitted to labels, so the pre-specification below is timestamped by git history.
 
 ## 1. Question
@@ -68,12 +68,16 @@ All four targets: **motility is the primary target**; `shape_rod`, `oxygen_aerob
 split and the correction are stated in the output itself. Replication across traits is the point, so multiplicity only
 matters if annotation is positive on one trait and that is claimed.
 
-## 7. Open: the confirmatory contrast (must be fixed before the first Pfam model is fitted)
+## 7. The confirmatory contrast (D7, APPROVED 2026-10-07; fixed before any Pfam model is fitted)
 
 D6 fixes the correction but not the single quantity the p-values come from. Needed: which contrast defines "annotation
 comes out positive" for the primary test and for the BH family. The answer is recorded here before any Pfam result exists.
 
-**Status: OPEN. Options proposed 2026-10-07; no answer recorded yet.**
+**Decision (D7), 2026-10-07, by the project owner: option A.** The single confirmatory contrast is the macro mean over the four
+held-out phyla of AUC(`pfam`) minus AUC(`kmer_genome`), within-phylum. "Annotation comes out positive" means this difference is
+positive with the p-value defined below at alpha = 0.05 for motility, and BH-corrected at 0.05 across the three secondary targets.
+Options B and C were not chosen; their pairings are reported as descriptive only. No Pfam model had been fitted to real labels
+when this was recorded.
 
 Common to every option (so the choice is only about which pair of models):
 - Statistic: the macro mean over the four held-out phyla of the within-phylum AUC difference, as `lopo` already reports it (`deltas` in the result JSON).
@@ -87,7 +91,7 @@ Common to every option (so the choice is only about which pair of models):
 | **B** | `pfam` minus `evo2` | Annotation beats the genome model on the headline comparison. | Confounded by sequence seen: Pfam sees the whole genome, Evo 2 about 2% of it. |
 | **C** | `pfam_windows` minus `evo2` | On exactly the same 10 x 8,192 bp windows, annotation extracts more than the embedding does. | Pfam on 82 kb recovers a median 4.6% of a genome's families, so a null here may only mean the windows are too small. |
 
-Recommendation: **A**. It is the cleanest test of the claim "annotation comes out positive" that D6's wording tracks, and it
+Rationale for A (recommended, then chosen): it is the cleanest test of the claim "annotation comes out positive" that D6's wording tracks, and it
 does not depend on how well Evo 2 does (which the earlier result puts near chance across phyla). B and C are then reported
 as descriptive decompositions of the gap to Evo 2.
 
