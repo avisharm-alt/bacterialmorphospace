@@ -332,3 +332,27 @@ to 2,435 genomes. Read the exact dollars for the run off the Modal dashboard and
 
 On a workspace whose `evo2-embeddings` volume is empty, first run `modal run -m src.evo2_modal::fetch_timing_sample --n 20`
 (CPU only, downloads the same 20 genomes `annotate_timing` would sample), then the timing command above.
+
+### Pfam as the fifth LOPO model (Phase 2)
+
+The design, decisions and the pre-specified confirmatory contrast are in `docs/phase2_pfam_spec.md`. Run order (all CPU
+except step 2; every step is resumable and skips what is already on the volume):
+
+```bash
+modal run -m src.evo2_modal::annotate_all                # 1. whole-genome Pfam for the four phyla (downloads missing genomes first)
+modal run -m src.evo2_modal::embed_all --n-windows 10 --max-usd 16 \
+    --phyla Pseudomonadota,Bacillota,Actinomycetota,Bacteroidota   # 2. GPU: Evo 2 depth-10 embeddings (skip if already on the volume)
+modal run -m src.evo2_modal::annotate_windows            # 3. Pfam on only the windows Evo 2 saw (matched-window control)
+modal run -m src.evo2_modal::lopo --pfam --n-perm 999 --target motility    # 4. one run per target; motility is primary,
+#   --target shape_rod | oxygen_aerobe | oxygen_facultative                #    the other three are secondary (BH across them)
+python -c "import src.evo2_modal as m; m.pfam_summary.info.raw_f(reports='reports')"   # 5. the confirmatory table (local only)
+```
+
+`lopo --pfam` adds `pfam` and `pfam_windows` through a two-stage filter fitted inside every fold (prevalence, then
+phylum-stratified Cochran-Mantel-Haenszel top-K, K tuned like C) and writes `reports/tables/evo2_lopo_<target>_pfam.json`.
+`--smoke` shuffles labels within phylum to time the pipeline and check it reports nothing where there is nothing to find;
+`--min-prev` runs the prevalence-threshold sensitivity (saved apart). `pfam_summary` refuses runs that differ from the
+pre-specification (n_perm 999, min-prev 0.005). Outputs: `reports/tables/pfam_lopo_summary.tsv`/`.json` (confirmatory
+table plus descriptive deltas and chosen K per phylum), `pfam_threshold_sensitivity.tsv`, `pfam_annotation_stats.tsv`.
+When fetching the family lists, create the destination first: `mkdir -p pfam_annotations && modal volume get
+evo2-embeddings annotations ./pfam_annotations`.
