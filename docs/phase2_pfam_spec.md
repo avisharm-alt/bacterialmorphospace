@@ -1,7 +1,7 @@
 # Phase 2 spec: Pfam presence/absence as the fifth LOPO model
 
-Status: **APPROVED decisions D1-D6 (below); one item still open (section 7, the confirmatory contrast).** This file is
-committed before any Pfam model is fitted to labels, so the pre-specification below is timestamped by git history.
+Status: **APPROVED: decisions D1-D6 and the confirmatory contrast (section 7).** This file is committed before any Pfam model
+is fitted to real labels, so the pre-specification below is timestamped by git history.
 
 ## 1. Question
 
@@ -68,11 +68,27 @@ All four targets: **motility is the primary target**; `shape_rod`, `oxygen_aerob
 split and the correction are stated in the output itself. Replication across traits is the point, so multiplicity only
 matters if annotation is positive on one trait and that is claimed.
 
-## 7. Open: the confirmatory contrast (must be fixed before the first Pfam model is fitted)
+## 7. Confirmatory contrast and permutations (APPROVED; recorded before any real-label Pfam model is fitted)
 
-D6 fixes the correction but not the single quantity the p-values come from. Needed: which contrast defines "annotation
-comes out positive" for the primary test and for the BH family. See the question put to the project owner; the answer is
-recorded here before any Pfam result exists.
+**The single confirmatory quantity per target** is *Pfam above chance*: T = the macro within-phylum AUC of the `pfam`
+model (equal-weight mean over the held-out phyla whose AUC is defined, as in the existing macro), tested one-sided
+against the within-phylum shuffle null: p = (1 + #{null macro >= T}) / (1 + n_perm), where each null draw permutes labels
+within every phylum, refits the two-stage filter on the permuted training labels, and keeps the chosen K and C.
+
+- **n_perm = 999** for the four confirmatory runs (smallest p = 0.001). n_boot = 1000, seed 20260929, depth 10.
+- **Motility** (primary) is tested alone at alpha = 0.05.
+- **shape_rod, oxygen_aerobe, oxygen_facultative** (secondary) are Benjamini-Hochberg corrected across these three p-values
+  at FDR 0.05; the q-values are reported next to the raw p-values.
+- **Everything else is descriptive, with no p-value:** Evo 2 vs Pfam and vs the matched-window control, Pfam vs
+  k-mer(genome), per-phylum AUCs, chosen K per fold, and the prevalence-threshold sensitivity (min-prev 1% and 5%,
+  motility, n_perm 50). These are reported as paired delta-AUC with 95% genus-cluster bootstrap CIs. The `pfam_windows`
+  null p-value is also computed but is not part of the confirmatory family.
+- All four targets are reported whatever the result, including a null one. `pfam_summary` computes the table from the saved
+  JSONs and refuses to mix runs that used a different n_perm.
+
+Calibration done before this was fixed, on shuffled labels and simulated no-signal data only: the in-fold pipeline gives a
+mean macro AUC of 0.4971 +- 0.0075 (SE) over 60 no-signal datasets and a null mean of 0.4967 +- 0.0049; a deliberately
+leaky global ranking gives 0.7194 +- 0.0052, so the check has power. Real-labelled Pfam results had not been seen.
 
 ## 8. Implementation order
 
