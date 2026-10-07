@@ -1,0 +1,10 @@
+{
+  "gtdb_v232": {
+    "url": "https://data.gtdb.ecogenomic.org/releases/release232/232.0/bac120_taxonomy_r232.tsv.gz",
+    "sha256": "d565d92730db443cd394a4b685ea682fe3691a3a1da3713804bbef2025d2cc71"
+  },
+  "gtdb_v220": {
+    "url": "https://data.gtdb.ecogenomic.org/releases/release220/220.0/bac120_taxonomy_r220.tsv.gz",
+    "sha256": "0e4318af347bf1afa31d323bdc82000b2a3823d6e67eac6a585465313207766d"
+  }
+}
