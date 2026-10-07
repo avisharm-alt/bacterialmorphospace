@@ -1,0 +1,34 @@
+metric	value
+media_items	17930
+media_type: Volumetric Image Series	15371
+media_type: Mesh	1835
+media_type: Image	702
+media_type: Photogrammetry Image Series	20
+media_type: Other	1
+media_type: Video	1
+visibility: Open Download	9419
+visibility: Restricted Download	8511
+Mesh / Open Download	1441
+Mesh / Restricted Download	394
+Volumetric Image Series / Open Download	7537
+Volumetric Image Series / Restricted Download	7834
+specimens	11304
+specimens_with_species_name	10896
+distinct_species	8527
+distinct_genera	5764
+species_with_any_ncbi_assembly (name match)	1455
+species_with_refseq_assembly	293
+species_with_chromosome_or_complete_assembly	583
+species_with_ncbi_reference_or_representative	1436
+genera_with_any_assembly_of_any_species	1926
+species with an open mesh	738
+species with an open mesh and any NCBI assembly	134
+species with an open mesh and a RefSeq assembly	37
+species with an open volumetric image series	4067
+species with an open volumetric image series and any NCBI assembly	623
+species with an open volumetric image series and a RefSeq assembly	154
+specimens whose species has an NCBI assembly	2138
+species with an NCBI assembly that are in OpenGenome2's eukaryote list (by name)	787
+entrez_check: unmatched names sampled	60
+entrez_check: of those with an assembly under a synonym	0
+entrez_check: implied extra species among all unmatched (point estimate)	0
