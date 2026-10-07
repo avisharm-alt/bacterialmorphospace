@@ -71,8 +71,25 @@ matters if annotation is positive on one trait and that is claimed.
 ## 7. Open: the confirmatory contrast (must be fixed before the first Pfam model is fitted)
 
 D6 fixes the correction but not the single quantity the p-values come from. Needed: which contrast defines "annotation
-comes out positive" for the primary test and for the BH family. See the question put to the project owner; the answer is
-recorded here before any Pfam result exists.
+comes out positive" for the primary test and for the BH family. The answer is recorded here before any Pfam result exists.
+
+**Status: OPEN. Options proposed 2026-10-07; no answer recorded yet.**
+
+Common to every option (so the choice is only about which pair of models):
+- Statistic: the macro mean over the four held-out phyla of the within-phylum AUC difference, as `lopo` already reports it (`deltas` in the result JSON).
+- p-value: two-sided, from the paired genus-cluster bootstrap that produces that interval, p = 2 min(s, 1 - s) with s the share of resamples with a positive difference, floored at 1/(n_boot + 1).
+- The primary target (motility) gets one test at alpha = 0.05. The BH family is the same contrast on the three secondary targets (`shape_rod`, `oxygen_aerobe`, `oxygen_facultative`).
+- Every other pairing in section 3 is still computed and printed, labelled descriptive, with no p-value.
+
+| option | contrast (macro within-phylum AUC difference) | what a positive result would say | cost |
+|---|---|---|---|
+| **A** | `pfam` minus `kmer_genome` | Pfam annotation beats whole-genome composition: both see the whole genome, so this isolates what annotation extracts. | Says nothing directly about Evo 2; the Evo 2 pairings stay descriptive. |
+| **B** | `pfam` minus `evo2` | Annotation beats the genome model on the headline comparison. | Confounded by sequence seen: Pfam sees the whole genome, Evo 2 about 2% of it. |
+| **C** | `pfam_windows` minus `evo2` | On exactly the same 10 x 8,192 bp windows, annotation extracts more than the embedding does. | Pfam on 82 kb recovers a median 4.6% of a genome's families, so a null here may only mean the windows are too small. |
+
+Recommendation: **A**. It is the cleanest test of the claim "annotation comes out positive" that D6's wording tracks, and it
+does not depend on how well Evo 2 does (which the earlier result puts near chance across phyla). B and C are then reported
+as descriptive decompositions of the gap to Evo 2.
 
 ## 8. Implementation order
 
