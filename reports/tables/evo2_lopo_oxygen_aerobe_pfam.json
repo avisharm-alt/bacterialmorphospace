@@ -1,0 +1,1143 @@
+{
+  "inner_auc": {
+    "evo2|Actinomycetota|0.0001": 0.6421198073714801,
+    "evo2|Actinomycetota|0.001": 0.6777686656116352,
+    "evo2|Actinomycetota|0.01": 0.6601505828456129,
+    "evo2|Actinomycetota|0.1": 0.6751781824592394,
+    "evo2|Actinomycetota|1.0": 0.70255953462561,
+    "evo2|Bacillota|0.0001": 0.7385702955661585,
+    "evo2|Bacillota|0.001": 0.7608517484719827,
+    "evo2|Bacillota|0.01": 0.7541860826867627,
+    "evo2|Bacillota|0.1": 0.7569502133082002,
+    "evo2|Bacillota|1.0": 0.7498074344681518,
+    "evo2|Bacteroidota|0.0001": 0.7269124180845101,
+    "evo2|Bacteroidota|0.001": 0.7231572464537165,
+    "evo2|Bacteroidota|0.01": 0.7302575609209523,
+    "evo2|Bacteroidota|0.1": 0.7371706337215582,
+    "evo2|Bacteroidota|1.0": 0.7471482579387051,
+    "evo2|Pseudomonadota|0.0001": 0.7408142511221225,
+    "evo2|Pseudomonadota|0.001": 0.8083031603847516,
+    "evo2|Pseudomonadota|0.01": 0.7991856411523344,
+    "evo2|Pseudomonadota|0.1": 0.7716656925407238,
+    "evo2|Pseudomonadota|1.0": 0.7694178579912183,
+    "gc|Actinomycetota|0.0001": 0.4123107025883022,
+    "gc|Actinomycetota|0.001": 0.4123107025883022,
+    "gc|Actinomycetota|0.01": 0.4123107025883022,
+    "gc|Actinomycetota|0.1": 0.4123107025883022,
+    "gc|Actinomycetota|1.0": 0.4123107025883022,
+    "gc|Bacillota|0.0001": 0.5954302081254093,
+    "gc|Bacillota|0.001": 0.5954302081254093,
+    "gc|Bacillota|0.01": 0.5954302081254093,
+    "gc|Bacillota|0.1": 0.5954302081254093,
+    "gc|Bacillota|1.0": 0.5954302081254093,
+    "gc|Bacteroidota|0.0001": 0.6821558296800739,
+    "gc|Bacteroidota|0.001": 0.6821558296800739,
+    "gc|Bacteroidota|0.01": 0.6821558296800739,
+    "gc|Bacteroidota|0.1": 0.6821558296800739,
+    "gc|Bacteroidota|1.0": 0.6821558296800739,
+    "gc|Pseudomonadota|0.0001": 0.3547928197357193,
+    "gc|Pseudomonadota|0.001": 0.3547928197357193,
+    "gc|Pseudomonadota|0.01": 0.3547928197357193,
+    "gc|Pseudomonadota|0.1": 0.3547928197357193,
+    "gc|Pseudomonadota|1.0": 0.3547928197357193,
+    "kmer_genome|Actinomycetota|0.0001": 0.4633488551112661,
+    "kmer_genome|Actinomycetota|0.001": 0.41380911069839854,
+    "kmer_genome|Actinomycetota|0.01": 0.48640184182835894,
+    "kmer_genome|Actinomycetota|0.1": 0.5957599248669512,
+    "kmer_genome|Actinomycetota|1.0": 0.580413648912348,
+    "kmer_genome|Bacillota|0.0001": 0.5956406066679996,
+    "kmer_genome|Bacillota|0.001": 0.627992326116887,
+    "kmer_genome|Bacillota|0.01": 0.5935964391180263,
+    "kmer_genome|Bacillota|0.1": 0.5425186617461079,
+    "kmer_genome|Bacillota|1.0": 0.4675493434753631,
+    "kmer_genome|Bacteroidota|0.0001": 0.6889758981921134,
+    "kmer_genome|Bacteroidota|0.001": 0.5846757285487603,
+    "kmer_genome|Bacteroidota|0.01": 0.5117728268026149,
+    "kmer_genome|Bacteroidota|0.1": 0.5457910638146943,
+    "kmer_genome|Bacteroidota|1.0": 0.5292230298641436,
+    "kmer_genome|Pseudomonadota|0.0001": 0.4039466388904473,
+    "kmer_genome|Pseudomonadota|0.001": 0.3754933768081015,
+    "kmer_genome|Pseudomonadota|0.01": 0.4250891185815231,
+    "kmer_genome|Pseudomonadota|0.1": 0.533904815261825,
+    "kmer_genome|Pseudomonadota|1.0": 0.5615121097816438,
+    "kmer_windows|Actinomycetota|0.0001": 0.4681692747153952,
+    "kmer_windows|Actinomycetota|0.001": 0.42565634673331426,
+    "kmer_windows|Actinomycetota|0.01": 0.5026740698932531,
+    "kmer_windows|Actinomycetota|0.1": 0.5957046129672979,
+    "kmer_windows|Actinomycetota|1.0": 0.5940525666359474,
+    "kmer_windows|Bacillota|0.0001": 0.5963815317434165,
+    "kmer_windows|Bacillota|0.001": 0.6279444575785448,
+    "kmer_windows|Bacillota|0.01": 0.6062932865931739,
+    "kmer_windows|Bacillota|0.1": 0.6079379032162491,
+    "kmer_windows|Bacillota|1.0": 0.5798820574420748,
+    "kmer_windows|Bacteroidota|0.0001": 0.689605080047183,
+    "kmer_windows|Bacteroidota|0.001": 0.5957863793528156,
+    "kmer_windows|Bacteroidota|0.01": 0.5333759004736845,
+    "kmer_windows|Bacteroidota|0.1": 0.577960080867509,
+    "kmer_windows|Bacteroidota|1.0": 0.5778311623747311,
+    "kmer_windows|Pseudomonadota|0.0001": 0.39138532071873744,
+    "kmer_windows|Pseudomonadota|0.001": 0.36508360220357683,
+    "kmer_windows|Pseudomonadota|0.01": 0.4178370911775529,
+    "kmer_windows|Pseudomonadota|0.1": 0.5225552853788937,
+    "kmer_windows|Pseudomonadota|1.0": 0.5620921853439443
+  },
+  "inner_auc_selected": {
+    "pfam_windows|Actinomycetota|1000|0.0001": 0.6939725379074325,
+    "pfam_windows|Actinomycetota|1000|0.001": 0.6791896126008647,
+    "pfam_windows|Actinomycetota|1000|0.01": 0.6386816887480081,
+    "pfam_windows|Actinomycetota|1000|0.1": 0.6157602328483903,
+    "pfam_windows|Actinomycetota|1000|1.0": 0.6083776437702787,
+    "pfam_windows|Actinomycetota|100|0.0001": 0.6722100741779992,
+    "pfam_windows|Actinomycetota|100|0.001": 0.6695298533890238,
+    "pfam_windows|Actinomycetota|100|0.01": 0.6612660360571113,
+    "pfam_windows|Actinomycetota|100|0.1": 0.6496032263553385,
+    "pfam_windows|Actinomycetota|100|1.0": 0.6433325523176435,
+    "pfam_windows|Actinomycetota|300|0.0001": 0.6931255673797999,
+    "pfam_windows|Actinomycetota|300|0.001": 0.6923208691677022,
+    "pfam_windows|Actinomycetota|300|0.01": 0.6677315684461554,
+    "pfam_windows|Actinomycetota|300|0.1": 0.6326467132030413,
+    "pfam_windows|Actinomycetota|300|1.0": 0.6128931034476682,
+    "pfam_windows|Actinomycetota|all|0.0001": 0.7015530698905851,
+    "pfam_windows|Actinomycetota|all|0.001": 0.6742605632282976,
+    "pfam_windows|Actinomycetota|all|0.01": 0.6430671126670892,
+    "pfam_windows|Actinomycetota|all|0.1": 0.6306852868810133,
+    "pfam_windows|Actinomycetota|all|1.0": 0.6240806188257253,
+    "pfam_windows|Bacillota|1000|0.0001": 0.7243117208051056,
+    "pfam_windows|Bacillota|1000|0.001": 0.7136215817429123,
+    "pfam_windows|Bacillota|1000|0.01": 0.6851878101977831,
+    "pfam_windows|Bacillota|1000|0.1": 0.6632487634813994,
+    "pfam_windows|Bacillota|1000|1.0": 0.6537376870233613,
+    "pfam_windows|Bacillota|100|0.0001": 0.6916904605121559,
+    "pfam_windows|Bacillota|100|0.001": 0.689920059781563,
+    "pfam_windows|Bacillota|100|0.01": 0.6782036998644103,
+    "pfam_windows|Bacillota|100|0.1": 0.6652953631227562,
+    "pfam_windows|Bacillota|100|1.0": 0.6538268497405663,
+    "pfam_windows|Bacillota|300|0.0001": 0.7103295032537599,
+    "pfam_windows|Bacillota|300|0.001": 0.7051676926096796,
+    "pfam_windows|Bacillota|300|0.01": 0.679846694756462,
+    "pfam_windows|Bacillota|300|0.1": 0.6494915488030787,
+    "pfam_windows|Bacillota|300|1.0": 0.6295400648339878,
+    "pfam_windows|Bacillota|all|0.0001": 0.734729708776884,
+    "pfam_windows|Bacillota|all|0.001": 0.7168722240898745,
+    "pfam_windows|Bacillota|all|0.01": 0.6962967357667228,
+    "pfam_windows|Bacillota|all|0.1": 0.6871187045928675,
+    "pfam_windows|Bacillota|all|1.0": 0.6855045264349827,
+    "pfam_windows|Bacteroidota|1000|0.0001": 0.7191145083553145,
+    "pfam_windows|Bacteroidota|1000|0.001": 0.7071603609807801,
+    "pfam_windows|Bacteroidota|1000|0.01": 0.6692555112832848,
+    "pfam_windows|Bacteroidota|1000|0.1": 0.6421632074080429,
+    "pfam_windows|Bacteroidota|1000|1.0": 0.631817566929171,
+    "pfam_windows|Bacteroidota|100|0.0001": 0.6817136611211514,
+    "pfam_windows|Bacteroidota|100|0.001": 0.6842469588882171,
+    "pfam_windows|Bacteroidota|100|0.01": 0.6752338559581701,
+    "pfam_windows|Bacteroidota|100|0.1": 0.6608630069187573,
+    "pfam_windows|Bacteroidota|100|1.0": 0.6525167322785698,
+    "pfam_windows|Bacteroidota|300|0.0001": 0.7168928304269405,
+    "pfam_windows|Bacteroidota|300|0.001": 0.7143065620468145,
+    "pfam_windows|Bacteroidota|300|0.01": 0.6893236604727379,
+    "pfam_windows|Bacteroidota|300|0.1": 0.6576025923401925,
+    "pfam_windows|Bacteroidota|300|1.0": 0.6327373885404814,
+    "pfam_windows|Bacteroidota|all|0.0001": 0.7326519338673858,
+    "pfam_windows|Bacteroidota|all|0.001": 0.7041400494957433,
+    "pfam_windows|Bacteroidota|all|0.01": 0.6707501987436969,
+    "pfam_windows|Bacteroidota|all|0.1": 0.657726825392805,
+    "pfam_windows|Bacteroidota|all|1.0": 0.6546277931916075,
+    "pfam_windows|Pseudomonadota|1000|0.0001": 0.7928107969887507,
+    "pfam_windows|Pseudomonadota|1000|0.001": 0.7875736052013842,
+    "pfam_windows|Pseudomonadota|1000|0.01": 0.7477633010888801,
+    "pfam_windows|Pseudomonadota|1000|0.1": 0.7143673510395679,
+    "pfam_windows|Pseudomonadota|1000|1.0": 0.6993541436375411,
+    "pfam_windows|Pseudomonadota|100|0.0001": 0.7711349215260009,
+    "pfam_windows|Pseudomonadota|100|0.001": 0.7804946884334427,
+    "pfam_windows|Pseudomonadota|100|0.01": 0.7746719467506247,
+    "pfam_windows|Pseudomonadota|100|0.1": 0.755211651309421,
+    "pfam_windows|Pseudomonadota|100|1.0": 0.7432612340517748,
+    "pfam_windows|Pseudomonadota|300|0.0001": 0.7893687277799429,
+    "pfam_windows|Pseudomonadota|300|0.001": 0.7934662063725888,
+    "pfam_windows|Pseudomonadota|300|0.01": 0.7755776008555024,
+    "pfam_windows|Pseudomonadota|300|0.1": 0.7403474605061788,
+    "pfam_windows|Pseudomonadota|300|1.0": 0.7155245586860826,
+    "pfam_windows|Pseudomonadota|all|0.0001": 0.801699120757594,
+    "pfam_windows|Pseudomonadota|all|0.001": 0.7979777435512702,
+    "pfam_windows|Pseudomonadota|all|0.01": 0.7820509927734925,
+    "pfam_windows|Pseudomonadota|all|0.1": 0.7729265218449686,
+    "pfam_windows|Pseudomonadota|all|1.0": 0.7650786421686457,
+    "pfam|Actinomycetota|1000|0.0001": 0.8580607842727087,
+    "pfam|Actinomycetota|1000|0.001": 0.8644128502810801,
+    "pfam|Actinomycetota|1000|0.01": 0.8290717225328424,
+    "pfam|Actinomycetota|1000|0.1": 0.7670309049880405,
+    "pfam|Actinomycetota|1000|1.0": 0.740964563865066,
+    "pfam|Actinomycetota|100|0.0001": 0.8500672181506438,
+    "pfam|Actinomycetota|100|0.001": 0.8618141362392265,
+    "pfam|Actinomycetota|100|0.01": 0.8761361761941445,
+    "pfam|Actinomycetota|100|0.1": 0.8505151054463046,
+    "pfam|Actinomycetota|100|1.0": 0.768221512977763,
+    "pfam|Actinomycetota|300|0.0001": 0.8711192132881426,
+    "pfam|Actinomycetota|300|0.001": 0.8770543153910705,
+    "pfam|Actinomycetota|300|0.01": 0.867144641264748,
+    "pfam|Actinomycetota|300|0.1": 0.8101844681934565,
+    "pfam|Actinomycetota|300|1.0": 0.7658401302119388,
+    "pfam|Actinomycetota|all|0.0001": 0.872882959892913,
+    "pfam|Actinomycetota|all|0.001": 0.8682792430627749,
+    "pfam|Actinomycetota|all|0.01": 0.8566191598253058,
+    "pfam|Actinomycetota|all|0.1": 0.8507749430798249,
+    "pfam|Actinomycetota|all|1.0": 0.8479810428957592,
+    "pfam|Bacillota|1000|0.0001": 0.87405980143695,
+    "pfam|Bacillota|1000|0.001": 0.8755663160561165,
+    "pfam|Bacillota|1000|0.01": 0.8517349488024317,
+    "pfam|Bacillota|1000|0.1": 0.7636650723875594,
+    "pfam|Bacillota|1000|1.0": 0.7038629185032717,
+    "pfam|Bacillota|100|0.0001": 0.8535400005094571,
+    "pfam|Bacillota|100|0.001": 0.860422118059311,
+    "pfam|Bacillota|100|0.01": 0.8477856797866021,
+    "pfam|Bacillota|100|0.1": 0.796499620808475,
+    "pfam|Bacillota|100|1.0": 0.7398533463151001,
+    "pfam|Bacillota|300|0.0001": 0.8739125602140373,
+    "pfam|Bacillota|300|0.001": 0.8749165115669427,
+    "pfam|Bacillota|300|0.01": 0.8605682486539008,
+    "pfam|Bacillota|300|0.1": 0.7797702307860064,
+    "pfam|Bacillota|300|1.0": 0.7145048994427659,
+    "pfam|Bacillota|all|0.0001": 0.8796064493142484,
+    "pfam|Bacillota|all|0.001": 0.882803474915792,
+    "pfam|Bacillota|all|0.01": 0.8767250684132213,
+    "pfam|Bacillota|all|0.1": 0.8721063958637734,
+    "pfam|Bacillota|all|1.0": 0.8646435178001087,
+    "pfam|Bacteroidota|1000|0.0001": 0.8673555806583471,
+    "pfam|Bacteroidota|1000|0.001": 0.8739426418424053,
+    "pfam|Bacteroidota|1000|0.01": 0.8296306287677009,
+    "pfam|Bacteroidota|1000|0.1": 0.7735093995093587,
+    "pfam|Bacteroidota|1000|1.0": 0.7537484301204528,
+    "pfam|Bacteroidota|100|0.0001": 0.8443097876397495,
+    "pfam|Bacteroidota|100|0.001": 0.8504926335457078,
+    "pfam|Bacteroidota|100|0.01": 0.8600133044674533,
+    "pfam|Bacteroidota|100|0.1": 0.8387165371166406,
+    "pfam|Bacteroidota|100|1.0": 0.7963928365487981,
+    "pfam|Bacteroidota|300|0.0001": 0.8619439978378146,
+    "pfam|Bacteroidota|300|0.001": 0.8776159560633744,
+    "pfam|Bacteroidota|300|0.01": 0.884155278407628,
+    "pfam|Bacteroidota|300|0.1": 0.8646940516576134,
+    "pfam|Bacteroidota|300|1.0": 0.8256680734983045,
+    "pfam|Bacteroidota|all|0.0001": 0.8696765802182901,
+    "pfam|Bacteroidota|all|0.001": 0.8690805558072143,
+    "pfam|Bacteroidota|all|0.01": 0.856102112924397,
+    "pfam|Bacteroidota|all|0.1": 0.8481401303260148,
+    "pfam|Bacteroidota|all|1.0": 0.8525934859021204,
+    "pfam|Pseudomonadota|1000|0.0001": 0.9071519778888232,
+    "pfam|Pseudomonadota|1000|0.001": 0.9094427533844677,
+    "pfam|Pseudomonadota|1000|0.01": 0.8843877063279247,
+    "pfam|Pseudomonadota|1000|0.1": 0.8549521178134039,
+    "pfam|Pseudomonadota|1000|1.0": 0.8424893517239749,
+    "pfam|Pseudomonadota|100|0.0001": 0.9212630191686607,
+    "pfam|Pseudomonadota|100|0.001": 0.9225847449448213,
+    "pfam|Pseudomonadota|100|0.01": 0.9200900658940129,
+    "pfam|Pseudomonadota|100|0.1": 0.8994749240687193,
+    "pfam|Pseudomonadota|100|1.0": 0.8597987101567393,
+    "pfam|Pseudomonadota|300|0.0001": 0.9171731801995051,
+    "pfam|Pseudomonadota|300|0.001": 0.9176667490027218,
+    "pfam|Pseudomonadota|300|0.01": 0.9029225860167484,
+    "pfam|Pseudomonadota|300|0.1": 0.8729916047468063,
+    "pfam|Pseudomonadota|300|1.0": 0.851873405673094,
+    "pfam|Pseudomonadota|all|0.0001": 0.9152435887071975,
+    "pfam|Pseudomonadota|all|0.001": 0.9267993025067932,
+    "pfam|Pseudomonadota|all|0.01": 0.9251252268652385,
+    "pfam|Pseudomonadota|all|0.1": 0.9218098474782076,
+    "pfam|Pseudomonadota|all|1.0": 0.9230975736855432
+  },
+  "macro": {
+    "deltas": {
+      "evo2 - gc": {
+        "ci": [
+          0.10544786732647451,
+          0.20732919970734892
+        ],
+        "delta": 0.16346260079751496,
+        "share_boot_positive": 1.0
+      },
+      "evo2 - kmer_genome": {
+        "ci": [
+          0.24678513025347,
+          0.35063717168197506
+        ],
+        "delta": 0.3063579060508716,
+        "share_boot_positive": 1.0
+      },
+      "evo2 - kmer_windows": {
+        "ci": [
+          0.22180202357784298,
+          0.32697393949590636
+        ],
+        "delta": 0.28064947550788655,
+        "share_boot_positive": 1.0
+      },
+      "evo2 - pfam": {
+        "ci": [
+          -0.171044441097196,
+          -0.10974729797254423
+        ],
+        "delta": -0.13780872646465636,
+        "share_boot_positive": 0.0
+      },
+      "evo2 - pfam_windows": {
+        "ci": [
+          -0.04614532551289156,
+          0.020688981714902768
+        ],
+        "delta": -0.010537321407206424,
+        "share_boot_positive": 0.236
+      },
+      "evo2_C1 - kmer_genome": {
+        "ci": [
+          0.26717465496554077,
+          0.3706312499204417
+        ],
+        "delta": 0.3268051135231442,
+        "share_boot_positive": 1.0
+      },
+      "pfam - kmer_genome": {
+        "ci": [
+          0.3928591191018428,
+          0.4860690760319477
+        ],
+        "delta": 0.44416663251552796,
+        "share_boot_positive": 1.0
+      },
+      "pfam_windows - kmer_windows": {
+        "ci": [
+          0.23848260998159063,
+          0.3367648145309917
+        ],
+        "delta": 0.29118679691509297,
+        "share_boot_positive": 1.0
+      }
+    },
+    "models": {
+      "evo2": {
+        "auc": 0.7534418461585857,
+        "ci": [
+          0.7110443738659131,
+          0.7854897989819756
+        ],
+        "null": {
+          "mean": 0.5006483225005348,
+          "p": 0.001,
+          "q95": 0.5294591727847654,
+          "sd": 0.01756629126413869
+        }
+      },
+      "evo2_C1": {
+        "auc": 0.7738890536308582,
+        "ci": [
+          0.7319652674205522,
+          0.8029840129350647
+        ]
+      },
+      "gc": {
+        "auc": 0.5899792453610707,
+        "ci": [
+          0.5521145737519775,
+          0.6274641630813429
+        ],
+        "null": {
+          "mean": 0.5001423215667482,
+          "p": 0.001,
+          "q95": 0.5234358294560623,
+          "sd": 0.014457709959102142
+        }
+      },
+      "kmer_genome": {
+        "auc": 0.4470839401077141,
+        "ci": [
+          0.4099296685578889,
+          0.4865218739066019
+        ],
+        "null": {
+          "mean": 0.49951072258034734,
+          "p": 0.999,
+          "q95": 0.526482822054764,
+          "sd": 0.015914092528519965
+        }
+      },
+      "kmer_windows": {
+        "auc": 0.4727923706506991,
+        "ci": [
+          0.43489709168569823,
+          0.512329801919502
+        ],
+        "null": {
+          "mean": 0.4994972167093163,
+          "p": 0.945,
+          "q95": 0.5251843202254115,
+          "sd": 0.01611870232700216
+        }
+      },
+      "pfam": {
+        "auc": 0.891250572623242,
+        "ci": [
+          0.860797073509279,
+          0.9133222721712351
+        ],
+        "null": {
+          "mean": 0.5006345205135777,
+          "p": 0.001,
+          "q95": 0.5302162508828798,
+          "sd": 0.017223202638001957
+        }
+      },
+      "pfam_windows": {
+        "auc": 0.7639791675657921,
+        "ci": [
+          0.7306698417505773,
+          0.7915823948453158
+        ],
+        "null": {
+          "mean": 0.5001338803532142,
+          "p": 0.001,
+          "q95": 0.5293020005951258,
+          "sd": 0.01765366257352461
+        }
+      }
+    },
+    "phyla_used": [
+      "Actinomycetota",
+      "Bacillota",
+      "Bacteroidota",
+      "Pseudomonadota"
+    ]
+  },
+  "median_fraction_of_genome_seen_by_evo2": 0.01997018124304627,
+  "median_genome_mb": 4.102116,
+  "missing": [],
+  "models": [
+    "evo2",
+    "kmer_genome",
+    "kmer_windows",
+    "gc",
+    "evo2_C1",
+    "pfam",
+    "pfam_windows"
+  ],
+  "n_boot": 1000,
+  "n_genomes": 2435,
+  "n_perm": 999,
+  "n_requested": 2435,
+  "n_windows": 10,
+  "per_phylum": {
+    "Actinomycetota": {
+      "deltas": {
+        "evo2 - gc": {
+          "ci": [
+            0.006190883277148658,
+            0.08782475306873504
+          ],
+          "delta": 0.045985789229032514,
+          "share_boot_positive": 0.989
+        },
+        "evo2 - kmer_genome": {
+          "ci": [
+            0.222727392473313,
+            0.44564510717167444
+          ],
+          "delta": 0.3430506673749917,
+          "share_boot_positive": 1.0
+        },
+        "evo2 - kmer_windows": {
+          "ci": [
+            0.13221388257009595,
+            0.3476566725788395
+          ],
+          "delta": 0.2440069061690684,
+          "share_boot_positive": 1.0
+        },
+        "evo2 - pfam": {
+          "ci": [
+            -0.12486971470482724,
+            -0.023565660362648174
+          ],
+          "delta": -0.0696261371937047,
+          "share_boot_positive": 0.001
+        },
+        "evo2 - pfam_windows": {
+          "ci": [
+            -0.038338661717577355,
+            0.06673500309214599
+          ],
+          "delta": 0.015240055780596284,
+          "share_boot_positive": 0.701
+        },
+        "evo2_C1 - kmer_genome": {
+          "ci": [
+            0.222727392473313,
+            0.44564510717167444
+          ],
+          "delta": 0.3430506673749917,
+          "share_boot_positive": 1.0
+        },
+        "pfam - kmer_genome": {
+          "ci": [
+            0.30206274520591847,
+            0.5113529718824609
+          ],
+          "delta": 0.4126768045686964,
+          "share_boot_positive": 1.0
+        },
+        "pfam_windows - kmer_windows": {
+          "ci": [
+            0.10541789202346961,
+            0.3404136370396293
+          ],
+          "delta": 0.2287668503884721,
+          "share_boot_positive": 0.999
+        }
+      },
+      "floor_auc": 0.5,
+      "majority_accuracy": 0.8461538461538461,
+      "models": {
+        "evo2": {
+          "C": 1.0,
+          "auc": 0.8686831794939903,
+          "ci": [
+            0.7965624972435221,
+            0.9199534765416086
+          ],
+          "null": {
+            "mean": 0.49979377079450127,
+            "p": 0.001,
+            "q95": 0.5634072647586161,
+            "sd": 0.037008425988472156
+          }
+        },
+        "evo2_C1": {
+          "C": 1.0,
+          "auc": 0.8686831794939903,
+          "ci": [
+            0.7965624972435221,
+            0.9199534765416086
+          ]
+        },
+        "gc": {
+          "C": 0.0001,
+          "auc": 0.8226973902649578,
+          "ci": [
+            0.7472388040068332,
+            0.8824345869550839
+          ],
+          "null": {
+            "mean": 0.4998995941289586,
+            "p": 0.001,
+            "q95": 0.5599309383093165,
+            "sd": 0.03656843426634943
+          }
+        },
+        "kmer_genome": {
+          "C": 0.1,
+          "auc": 0.5256325121189986,
+          "ci": [
+            0.4254981835719001,
+            0.6243939924574684
+          ],
+          "null": {
+            "mean": 0.49882188450486475,
+            "p": 0.22,
+            "q95": 0.5600471478849857,
+            "sd": 0.036165302476162085
+          }
+        },
+        "kmer_windows": {
+          "C": 0.1,
+          "auc": 0.6246762733249219,
+          "ci": [
+            0.5243009838343939,
+            0.7213518550981686
+          ],
+          "null": {
+            "mean": 0.4995398147333867,
+            "p": 0.001,
+            "q95": 0.5586127896938707,
+            "sd": 0.0355171866491922
+          }
+        },
+        "pfam": {
+          "C": 0.001,
+          "K": 300,
+          "auc": 0.938309316687695,
+          "ci": [
+            0.8925134909885007,
+            0.9677878556053352
+          ],
+          "n_selected": 300,
+          "n_stage1": 11187,
+          "null": {
+            "mean": 0.5014527609487434,
+            "p": 0.001,
+            "q95": 0.5608207716315824,
+            "sd": 0.03649398605915906
+          }
+        },
+        "pfam_windows": {
+          "C": 0.0001,
+          "K": "all",
+          "auc": 0.853443123713394,
+          "ci": [
+            0.7815628739949856,
+            0.907051553320721
+          ],
+          "n_selected": 3781,
+          "n_stage1": 3781,
+          "null": {
+            "mean": 0.5015531834377708,
+            "p": 0.001,
+            "q95": 0.5626336410120194,
+            "sd": 0.03598474531366279
+          }
+        }
+      },
+      "n": 481,
+      "n_genera": 207,
+      "n_positive": 407,
+      "prevalence": 0.8461538461538461
+    },
+    "Bacillota": {
+      "deltas": {
+        "evo2 - gc": {
+          "ci": [
+            0.04389121828480108,
+            0.2361907043673625
+          ],
+          "delta": 0.13881459493260806,
+          "share_boot_positive": 1.0
+        },
+        "evo2 - kmer_genome": {
+          "ci": [
+            0.29892940611084556,
+            0.4200667186622981
+          ],
+          "delta": 0.35960702473423695,
+          "share_boot_positive": 1.0
+        },
+        "evo2 - kmer_windows": {
+          "ci": [
+            0.2894456392141415,
+            0.4096317616528709
+          ],
+          "delta": 0.3499935960702474,
+          "share_boot_positive": 1.0
+        },
+        "evo2 - pfam": {
+          "ci": [
+            -0.24796805177519923,
+            -0.14435846928025234
+          ],
+          "delta": -0.1945815220257513,
+          "share_boot_positive": 0.0
+        },
+        "evo2 - pfam_windows": {
+          "ci": [
+            -0.09074044196441768,
+            0.028615535888585387
+          ],
+          "delta": -0.028915626341999956,
+          "share_boot_positive": 0.169
+        },
+        "evo2_C1 - kmer_genome": {
+          "ci": [
+            0.28219735542998187,
+            0.4351800301244502
+          ],
+          "delta": 0.36147546541501235,
+          "share_boot_positive": 1.0
+        },
+        "pfam - kmer_genome": {
+          "ci": [
+            0.4823248666134676,
+            0.6258109251466759
+          ],
+          "delta": 0.5541885467599883,
+          "share_boot_positive": 1.0
+        },
+        "pfam_windows - kmer_windows": {
+          "ci": [
+            0.3082098493854009,
+            0.45578525963733263
+          ],
+          "delta": 0.37890922241224734,
+          "share_boot_positive": 1.0
+        }
+      },
+      "floor_auc": 0.5,
+      "majority_accuracy": 0.5478142076502732,
+      "models": {
+        "evo2": {
+          "C": 0.001,
+          "auc": 0.712440952000663,
+          "ci": [
+            0.6618065105676053,
+            0.7616496996626017
+          ],
+          "null": {
+            "mean": 0.5015587232138,
+            "p": 0.001,
+            "q95": 0.538036329116785,
+            "sd": 0.02210170997252424
+          }
+        },
+        "evo2_C1": {
+          "C": 1.0,
+          "auc": 0.7143093926814384,
+          "ci": [
+            0.6640602691050078,
+            0.7623875441357154
+          ]
+        },
+        "gc": {
+          "C": 0.0001,
+          "auc": 0.573626357068055,
+          "ci": [
+            0.5050748589438568,
+            0.6347331894303541
+          ],
+          "null": {
+            "mean": 0.5002655728484661,
+            "p": 0.001,
+            "q95": 0.534636219119874,
+            "sd": 0.021662380031415008
+          }
+        },
+        "kmer_genome": {
+          "C": 0.001,
+          "auc": 0.3528339272664261,
+          "ci": [
+            0.29085790144874185,
+            0.4145745513453195
+          ],
+          "null": {
+            "mean": 0.5002379178871483,
+            "p": 1.0,
+            "q95": 0.5342836262817277,
+            "sd": 0.021309792744531365
+          }
+        },
+        "kmer_windows": {
+          "C": 0.001,
+          "auc": 0.36244735593041566,
+          "ci": [
+            0.3014532993229659,
+            0.4246470863006492
+          ],
+          "null": {
+            "mean": 0.5002365528617874,
+            "p": 1.0,
+            "q95": 0.5332235875567878,
+            "sd": 0.02111887282746306
+          }
+        },
+        "pfam": {
+          "C": 0.001,
+          "K": "all",
+          "auc": 0.9070224740264143,
+          "ci": [
+            0.8729535418086523,
+            0.9358442618399182
+          ],
+          "n_selected": 10514,
+          "n_stage1": 10514,
+          "null": {
+            "mean": 0.5015526522446534,
+            "p": 0.001,
+            "q95": 0.5358043712471088,
+            "sd": 0.02156817902146626
+          }
+        },
+        "pfam_windows": {
+          "C": 0.0001,
+          "K": "all",
+          "auc": 0.741356578342663,
+          "ci": [
+            0.7025850328404196,
+            0.7821788494819067
+          ],
+          "n_selected": 3594,
+          "n_stage1": 3594,
+          "null": {
+            "mean": 0.5001450659962989,
+            "p": 0.001,
+            "q95": 0.5336583013764682,
+            "sd": 0.020481208893333054
+          }
+        }
+      },
+      "n": 732,
+      "n_genera": 371,
+      "n_positive": 331,
+      "prevalence": 0.4521857923497268
+    },
+    "Bacteroidota": {
+      "deltas": {
+        "evo2 - gc": {
+          "ci": [
+            0.3431416497633536,
+            0.6473381014088252
+          ],
+          "delta": 0.5255957952336381,
+          "share_boot_positive": 1.0
+        },
+        "evo2 - kmer_genome": {
+          "ci": [
+            0.3504681825760831,
+            0.6412571981023731
+          ],
+          "delta": 0.5227518179854561,
+          "share_boot_positive": 1.0
+        },
+        "evo2 - kmer_windows": {
+          "ci": [
+            0.3469010835598623,
+            0.6363536370902979
+          ],
+          "delta": 0.519187846497228,
+          "share_boot_positive": 1.0
+        },
+        "evo2 - pfam": {
+          "ci": [
+            -0.15423993584322498,
+            -0.01765164060446902
+          ],
+          "delta": -0.07426740586075309,
+          "share_boot_positive": 0.004
+        },
+        "evo2 - pfam_windows": {
+          "ci": [
+            -0.038402398309809314,
+            0.10194091695504363
+          ],
+          "delta": 0.04233566131470956,
+          "share_boot_positive": 0.866
+        },
+        "evo2_C1 - kmer_genome": {
+          "ci": [
+            0.3504681825760831,
+            0.6412571981023731
+          ],
+          "delta": 0.5227518179854561,
+          "share_boot_positive": 1.0
+        },
+        "pfam - kmer_genome": {
+          "ci": [
+            0.4507748519920093,
+            0.697423271185743
+          ],
+          "delta": 0.5970192238462092,
+          "share_boot_positive": 1.0
+        },
+        "pfam_windows - kmer_windows": {
+          "ci": [
+            0.3365179385889546,
+            0.5731751951130238
+          ],
+          "delta": 0.4768521851825185,
+          "share_boot_positive": 1.0
+        }
+      },
+      "floor_auc": 0.5,
+      "majority_accuracy": 0.7897310513447433,
+      "models": {
+        "evo2": {
+          "C": 1.0,
+          "auc": 0.8390452876376989,
+          "ci": [
+            0.7160200082628287,
+            0.9136553640923185
+          ],
+          "null": {
+            "mean": 0.4997218400631173,
+            "p": 0.001,
+            "q95": 0.5574555403556771,
+            "sd": 0.035570137135377926
+          }
+        },
+        "evo2_C1": {
+          "C": 1.0,
+          "auc": 0.8390452876376989,
+          "ci": [
+            0.7160200082628287,
+            0.9136553640923185
+          ]
+        },
+        "gc": {
+          "C": 0.0001,
+          "auc": 0.3134494924040608,
+          "ci": [
+            0.2313954581480975,
+            0.4297385357514738
+          ],
+          "null": {
+            "mean": 0.49971953377526135,
+            "p": 1.0,
+            "q95": 0.5559507523939808,
+            "sd": 0.0347688878824113
+          }
+        },
+        "kmer_genome": {
+          "C": 0.0001,
+          "auc": 0.3162934696522428,
+          "ci": [
+            0.23251791687650591,
+            0.4149023503211623
+          ],
+          "null": {
+            "mean": 0.499370527558302,
+            "p": 1.0,
+            "q95": 0.5564727482180142,
+            "sd": 0.03497894617386306
+          }
+        },
+        "kmer_windows": {
+          "C": 0.0001,
+          "auc": 0.3198574411404709,
+          "ci": [
+            0.23397334470433495,
+            0.4223748518749825
+          ],
+          "null": {
+            "mean": 0.4992459519783301,
+            "p": 1.0,
+            "q95": 0.5577867377060984,
+            "sd": 0.034804514205456945
+          }
+        },
+        "pfam": {
+          "C": 0.01,
+          "K": 300,
+          "auc": 0.913312693498452,
+          "ci": [
+            0.8096754480768281,
+            0.9682952715140358
+          ],
+          "n_selected": 300,
+          "n_stage1": 11072,
+          "null": {
+            "mean": 0.49952095878728464,
+            "p": 0.001,
+            "q95": 0.5539653682770538,
+            "sd": 0.03435287090816224
+          }
+        },
+        "pfam_windows": {
+          "C": 0.0001,
+          "K": "all",
+          "auc": 0.7967096263229894,
+          "ci": [
+            0.7070602597259673,
+            0.8559182421989268
+          ],
+          "n_selected": 3552,
+          "n_stage1": 3552,
+          "null": {
+            "mean": 0.4991278267972054,
+            "p": 0.001,
+            "q95": 0.5536539707682339,
+            "sd": 0.03472868049718126
+          }
+        }
+      },
+      "n": 409,
+      "n_genera": 152,
+      "n_positive": 323,
+      "prevalence": 0.7897310513447433
+    },
+    "Pseudomonadota": {
+      "deltas": {
+        "evo2 - gc": {
+          "ci": [
+            -0.13391463438284187,
+            0.018239712139750543
+          ],
+          "delta": -0.056545776205218945,
+          "share_boot_positive": 0.073
+        },
+        "evo2 - kmer_genome": {
+          "ci": [
+            -0.07239438739452456,
+            0.0788329036732937
+          ],
+          "delta": 2.2114108801485344e-05,
+          "share_boot_positive": 0.517
+        },
+        "evo2 - kmer_windows": {
+          "ci": [
+            -0.06968182772998915,
+            0.09412881081232113
+          ],
+          "delta": 0.00940955329500226,
+          "share_boot_positive": 0.618
+        },
+        "evo2 - pfam": {
+          "ci": [
+            -0.28285180158950435,
+            -0.14613184852074074
+          ],
+          "delta": -0.2127598407784166,
+          "share_boot_positive": 0.0
+        },
+        "evo2 - pfam_windows": {
+          "ci": [
+            -0.14694738657108322,
+            0.0010684583777803944
+          ],
+          "delta": -0.0708093763821318,
+          "share_boot_positive": 0.026
+        },
+        "evo2_C1 - kmer_genome": {
+          "ci": [
+            0.0093979401875763,
+            0.15271187576851133
+          ],
+          "delta": 0.07994250331711639,
+          "share_boot_positive": 0.984
+        },
+        "pfam - kmer_genome": {
+          "ci": [
+            0.13782685272136894,
+            0.2869242823436503
+          ],
+          "delta": 0.21278195488721807,
+          "share_boot_positive": 1.0
+        },
+        "pfam_windows - kmer_windows": {
+          "ci": [
+            0.0075891473568179876,
+            0.16508478644671173
+          ],
+          "delta": 0.08021892967713407,
+          "share_boot_positive": 0.982
+        }
+      },
+      "floor_auc": 0.5,
+      "majority_accuracy": 0.8364083640836408,
+      "models": {
+        "evo2": {
+          "C": 0.001,
+          "auc": 0.5935979655019903,
+          "ci": [
+            0.5231129534904985,
+            0.6595384470869983
+          ],
+          "null": {
+            "mean": 0.5015189559307206,
+            "p": 0.003,
+            "q95": 0.5458348076072534,
+            "sd": 0.027272140837186976
+          }
+        },
+        "evo2_C1": {
+          "C": 1.0,
+          "auc": 0.6735183547103052,
+          "ci": [
+            0.6151661199791436,
+            0.7251759551136141
+          ]
+        },
+        "gc": {
+          "C": 0.0001,
+          "auc": 0.6501437417072092,
+          "ci": [
+            0.5825613448981364,
+            0.7135844658313156
+          ],
+          "null": {
+            "mean": 0.5006845855143068,
+            "p": 0.001,
+            "q95": 0.5452930119416187,
+            "sd": 0.027451422582116233
+          }
+        },
+        "kmer_genome": {
+          "C": 1.0,
+          "auc": 0.5935758513931888,
+          "ci": [
+            0.5253325441590515,
+            0.6574233960607734
+          ],
+          "null": {
+            "mean": 0.4996125603710743,
+            "p": 0.001,
+            "q95": 0.5456048208757186,
+            "sd": 0.027375454760694903
+          }
+        },
+        "kmer_windows": {
+          "C": 1.0,
+          "auc": 0.584188412206988,
+          "ci": [
+            0.517248367660754,
+            0.6477251077704346
+          ],
+          "null": {
+            "mean": 0.4989665472637609,
+            "p": 0.002,
+            "q95": 0.5434918177797434,
+            "sd": 0.027204175801335884
+          }
+        },
+        "pfam": {
+          "C": 0.001,
+          "K": "all",
+          "auc": 0.8063578062804069,
+          "ci": [
+            0.7490600506020276,
+            0.849931986913517
+          ],
+          "n_selected": 9947,
+          "n_stage1": 9947,
+          "null": {
+            "mean": 0.5000117100736297,
+            "p": 0.001,
+            "q95": 0.5467005749668289,
+            "sd": 0.02814790772651043
+          }
+        },
+        "pfam_windows": {
+          "C": 0.0001,
+          "K": "all",
+          "auc": 0.6644073418841221,
+          "ci": [
+            0.6073084437814985,
+            0.7172473505434979
+          ],
+          "n_selected": 3585,
+          "n_stage1": 3585,
+          "null": {
+            "mean": 0.49970944518158145,
+            "p": 0.001,
+            "q95": 0.5438832375055286,
+            "sd": 0.026154916699883658
+          }
+        }
+      },
+      "n": 813,
+      "n_genera": 402,
+      "n_positive": 680,
+      "prevalence": 0.8364083640836408
+    }
+  },
+  "pfam": {
+    "ks": [
+      100,
+      300,
+      1000,
+      "all"
+    ],
+    "min_prev": 0.005,
+    "n_families_total": 16995
+  },
+  "phyla": [
+    "Actinomycetota",
+    "Bacillota",
+    "Bacteroidota",
+    "Pseudomonadota"
+  ],
+  "timing_s": {
+    "bootstrap_s": 3.739002782,
+    "null_s": 3709.2959957789994,
+    "tune_and_outer_s": 78.879325497
+  }
+}
