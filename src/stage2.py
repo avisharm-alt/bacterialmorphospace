@@ -39,6 +39,11 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def accession_hash(accessions) -> str:
+    """Stable hash independent of panel row order or subset-file line order."""
+    return hashlib.sha256(("\n".join(sorted(accessions)) + "\n").encode()).hexdigest()
+
+
 def assembly_stem(accession: str) -> str:
     """Ignore the GTDB RS/GB prefix and assembly version, retaining GCA/GCF."""
     return re.sub(r"\.\d+$", "", re.sub(r"^(RS|GB)_", "", accession))
@@ -62,6 +67,37 @@ def panel_path(root: Path, name: str) -> Path:
 
 def mapping_path(root: Path) -> Path:
     return root / "data/final/stage2_taxonomy.tsv"
+
+
+def read_accession_subset(path: Path) -> list[str]:
+    """Read a frozen one-accession-per-line pilot list, rejecting silent deduping."""
+    accessions = [line.strip() for line in path.read_text().splitlines()]
+    if not accessions or any(not accession for accession in accessions):
+        raise ValueError("accession subset is empty or contains a blank line")
+    if len(accessions) != len(set(accessions)):
+        raise ValueError("duplicate accession in subset")
+    return accessions
+
+
+def select_accessions(core: pd.DataFrame, no_spore: pd.DataFrame,
+                      accessions: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Require the exact same selected assembly IDs in both trait panels."""
+    wanted = set(accessions)
+    selected = []
+    for name, panel in (("core", core), ("no_spore", no_spore)):
+        missing = wanted - set(panel["ncbi_assembly_accession"])
+        if missing:
+            raise ValueError(f"{name} panel lacks {len(missing)} subset accessions; first: {sorted(missing)[0]}")
+        sub = panel[panel["ncbi_assembly_accession"].isin(wanted)].copy()
+        if len(sub) != len(wanted):
+            raise ValueError(f"{name} subset is not one row per assembly")
+        selected.append(sub)
+    if set(selected[0]["ncbi_assembly_accession"]) != set(selected[1]["ncbi_assembly_accession"]):
+        raise AssertionError("subset assemblies differ across trait panels")
+    paired = selected[0].merge(selected[1], on="ncbi_assembly_accession", suffixes=("_core", "_no_spore"))
+    if (paired["gtdb_species_core"] != paired["gtdb_species_no_spore"]).any():
+        raise ValueError("same subset assembly assigned to different species across panels")
+    return selected[0], selected[1]
 
 
 def prepare(root: Path = ROOT) -> dict:
@@ -136,9 +172,16 @@ def audit(core: pd.DataFrame, no_spore: pd.DataFrame) -> dict:
             "microaerophile_folded": int(df["oxygen_microaerophile_folded"].sum()),
         }
     shared = core.merge(no_spore, on="gtdb_species", suffixes=("_core", "_no_spore"))
+    spore_missing = shared["spore_no_spore"].isna()
+    assembly_differs = shared["gtdb_accession_core"] != shared["gtdb_accession_no_spore"]
     result["cross_panel"] = {
         "shared_species": len(shared),
-        "different_assembly": int((shared["gtdb_accession_core"] != shared["gtdb_accession_no_spore"]).sum()),
+        "different_assembly": int(assembly_differs.sum()),
+        "core_spore_present_no_spore_missing": int((shared["spore_core"].notna() & spore_missing).sum()),
+        "spore_missing_different_assembly": int((spore_missing & assembly_differs).sum()),
+        "spore_missing_same_assembly": int((spore_missing & ~assembly_differs).sum()),
+        "spore_nonmissing_disagreement": int((shared["spore_no_spore"].notna() &
+                                               (shared["spore_core"] != shared["spore_no_spore"])).sum()),
         "different_labels": {t: int((shared[f"{t}_core"] != shared[f"{t}_no_spore"]).sum())
                              for t in TRAITS if t != "spore"},
     }
@@ -257,14 +300,18 @@ def kmer_predict(x_train: np.ndarray, y_train: pd.Series, x_test: np.ndarray, la
     return np.asarray(labels)[np.argmax(scores, axis=1)]
 
 
-def load_kmers(df: pd.DataFrame, fasta_dir: Path) -> np.ndarray:
+def load_kmers(df: pd.DataFrame, fasta_dir: Path, cache: dict[str, np.ndarray] | None = None) -> np.ndarray:
+    if cache is None:
+        cache = {}
     vectors = []
     for accession in df["ncbi_assembly_accession"]:
-        candidates = [fasta_dir / f"{accession}.fna", fasta_dir / f"{accession}.fna.gz"]
-        found = next((p for p in candidates if p.is_file()), None)
-        if found is None:
-            raise FileNotFoundError(f"no FASTA for {accession} in {fasta_dir}")
-        vectors.append(kmer_features(found))
+        if accession not in cache:
+            candidates = [fasta_dir / f"{accession}.fna", fasta_dir / f"{accession}.fna.gz"]
+            found = next((p for p in candidates if p.is_file()), None)
+            if found is None:
+                raise FileNotFoundError(f"no FASTA for {accession} in {fasta_dir}")
+            cache[accession] = kmer_features(found)
+        vectors.append(cache[accession])
     return np.stack(vectors)
 
 
@@ -281,11 +328,27 @@ def metrics(y_true: pd.Series | np.ndarray, y_pred: np.ndarray, labels: list[str
     return float(np.nanmean(recalls)), float(np.nanmean(f1s))
 
 
-def benchmark(root: Path = ROOT, repeats: int = 20, fasta_dir: Path | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+def benchmark(root: Path = ROOT, repeats: int = 20, fasta_dir: Path | None = None,
+              accession_subset: Path | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     core, no_spore = load_panel(root, "core"), load_panel(root, "no_spore")
+    subset = read_accession_subset(accession_subset) if accession_subset is not None else None
+    manifest = None
+    if subset is not None:
+        core, no_spore = select_accessions(core, no_spore, subset)
+    output = root / "reports" / ("stage2_subset" if subset is not None else "")
+    (output / "tables").mkdir(parents=True, exist_ok=True)
     audit_info = audit(core, no_spore)
-    (root / "reports/stage2_audit.json").write_text(json.dumps(audit_info, indent=2) + "\n")
+    (output / "stage2_audit.json").write_text(json.dumps(audit_info, indent=2) + "\n")
+    if subset is not None:
+        manifest = {"subset_file": str(accession_subset), "subset_file_sha256": sha256(accession_subset),
+                    "sorted_accessions_sha256": accession_hash(subset),
+                    "accessions": sorted(subset), "n_accessions": len(subset),
+                    "core_panel_sha256": sha256(panel_path(root, "core")),
+                    "no_spore_panel_sha256": sha256(panel_path(root, "no_spore")),
+                    "repeats": repeats, "seed_start": 20261007,
+                    "models": ["prevalence", "taxonomy"] + (["kmer4"] if fasta_dir is not None else [])}
     records, distance_rows = [], []
+    kmer_cache: dict[str, np.ndarray] = {}
     for trait in TRAITS:
         df = (core if trait == "spore" else no_spore).copy()
         if df[trait].isna().any():
@@ -293,12 +356,17 @@ def benchmark(root: Path = ROOT, repeats: int = 20, fasta_dir: Path | None = Non
         labels = list(LABELS[trait])
         if set(df[trait]) != set(labels):
             raise ValueError(f"unexpected or absent {trait} labels")
-        features = load_kmers(df, fasta_dir) if fasta_dir is not None else None
+        features = load_kmers(df, fasta_dir, kmer_cache) if fasta_dir is not None else None
         for holdout in ("within", "genus", "family", "order"):
             for repeat in range(repeats):
                 train_idx, test_idx = split_indices(df, holdout, 20261007 + repeat)
                 train, test = df.iloc[train_idx], df.iloc[test_idx]
+                train_hash = accession_hash(train["ncbi_assembly_accession"])
+                test_hash = accession_hash(test["ncbi_assembly_accession"])
                 y_test = test[trait].to_numpy()
+                train_classes = len(set(train[trait]))
+                test_classes = len(set(y_test))
+                evaluable = train_classes == len(labels) and test_classes == len(labels)
                 distance = nearest_rank(train, test)
                 models = {
                     "prevalence": prevalence_predict(train[trait], len(test), labels),
@@ -307,10 +375,11 @@ def benchmark(root: Path = ROOT, repeats: int = 20, fasta_dir: Path | None = Non
                 if features is not None:
                     models["kmer4"] = kmer_predict(features[train_idx], train[trait], features[test_idx], labels)
                 for model, prediction in models.items():
-                    ba, f1 = metrics(y_test, prediction, labels)
+                    ba, f1 = metrics(y_test, prediction, labels) if evaluable else (np.nan, np.nan)
                     records.append({"trait": trait, "panel_n": len(df), "split": holdout,
                                     "repeat": repeat, "train_n": len(train), "test_n": len(test),
-                                    "test_classes": len(set(y_test)), "model": model,
+                                    "train_accessions_sha256": train_hash, "test_accessions_sha256": test_hash,
+                                    "train_classes": train_classes, "test_classes": test_classes, "model": model,
                                     "balanced_accuracy": ba, "macro_f1": f1})
                     for rank in np.unique(distance):
                         mask = distance == rank
@@ -320,17 +389,20 @@ def benchmark(root: Path = ROOT, repeats: int = 20, fasta_dir: Path | None = Non
                                               "n": int(mask.sum()), "balanced_accuracy": sub_ba,
                                               "macro_f1": sub_f1})
     details = pd.DataFrame(records)
-    details.to_csv(root / "reports/tables/stage2_split_metrics.tsv", sep="\t", index=False)
+    details.to_csv(output / "tables/stage2_split_metrics.tsv", sep="\t", index=False, na_rep="NA")
     distances = pd.DataFrame(distance_rows)
-    distances.to_csv(root / "reports/tables/stage2_distance_metrics.tsv", sep="\t", index=False)
+    distances.to_csv(output / "tables/stage2_distance_metrics.tsv", sep="\t", index=False, na_rep="NA")
     summary = details.groupby(["trait", "split", "model"], as_index=False).agg(
         panel_n=("panel_n", "first"), train_n=("train_n", "median"), test_n=("test_n", "median"),
-        min_test_classes=("test_classes", "min"),
+        min_train_classes=("train_classes", "min"), min_test_classes=("test_classes", "min"),
+        valid_repeats=("balanced_accuracy", "count"),
         ba_mean=("balanced_accuracy", "mean"), ba_p025=("balanced_accuracy", lambda s: s.quantile(.025)),
         ba_p975=("balanced_accuracy", lambda s: s.quantile(.975)),
         f1_mean=("macro_f1", "mean"), f1_p025=("macro_f1", lambda s: s.quantile(.025)),
         f1_p975=("macro_f1", lambda s: s.quantile(.975)))
-    summary.to_csv(root / "reports/tables/stage2_benchmark_summary.tsv", sep="\t", index=False)
+    summary.to_csv(output / "tables/stage2_benchmark_summary.tsv", sep="\t", index=False, na_rep="NA")
+    if manifest is not None:
+        (output / "stage2_run.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return summary, distances
 
 
@@ -339,6 +411,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=("prepare", "benchmark"))
     parser.add_argument("--repeats", type=int, default=20)
     parser.add_argument("--fasta-dir", type=Path, help="directory of accession.fna[.gz] files for optional 4-mer baseline")
+    parser.add_argument("--accession-subset", type=Path, help="one NCBI assembly accession per line, required in both panels")
     args = parser.parse_args(argv)
     root = load_config().root
     if args.command == "prepare":
@@ -346,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         if args.repeats < 1:
             parser.error("--repeats must be positive")
-        summary, _ = benchmark(root, args.repeats, args.fasta_dir)
+        summary, _ = benchmark(root, args.repeats, args.fasta_dir, args.accession_subset)
         print(f"wrote {len(summary)} benchmark summary rows")
     return 0
 

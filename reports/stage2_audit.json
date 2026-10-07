@@ -125,6 +125,10 @@
   "cross_panel": {
     "shared_species": 2580,
     "different_assembly": 32,
+    "core_spore_present_no_spore_missing": 33,
+    "spore_missing_different_assembly": 32,
+    "spore_missing_same_assembly": 1,
+    "spore_nonmissing_disagreement": 0,
     "different_labels": {
       "gram": 1,
       "shape": 1,

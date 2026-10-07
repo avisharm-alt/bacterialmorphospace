@@ -20,15 +20,19 @@ larger five-trait panel (N = 5,634), motility taxonomy balanced accuracy falls
 from .820 (.800–.833 across splits) to .606 (.521–.754) with held orders;
 oxygen falls from .824 (.808–.848) to .516 (.298–.745). Gram remains .950
 at held order. Spore uses N = 2,580. There is **no k-mer or Evo 2 score yet**:
-the assembly FASTAs are absent from this checkout. GTDB v220 contains exact
+the assembly FASTAs are absent from this checkout. A fixed 192-accession
+FASTA pilot is now listed, with matched assemblies and strains across both
+panels. The cross-panel audit found 33 shared species with a core spore label
+but a missing no-spore-row spore label (32 different assemblies, one different
+BacDive strain on the same assembly). GTDB v220 contains exact
 accessions for 4,993 of 5,634 larger-panel genomes, so OpenGenome2 exposure
 is plausible, but actual training inclusion is unverified. See the
 [Stage 2 report](stage2_report.md) for all traits, macro F1, and limitations.
 
 **Decisions to make:**
 
-1. Approve a prespecified, clade-balanced FASTA subset and acquisition source
-   for the 4-mer baseline, with missing-genome accounting.
+1. Choose an acquisition source for the committed 192-accession FASTA pilot;
+   verify each assembly hash and account for unavailable genomes before scoring.
 2. Decide whether to restrict Evo 2 evaluation to accession-negative genomes
    while pursuing a stronger sequence-overlap audit; accession-negative is
    not guaranteed unexposed.

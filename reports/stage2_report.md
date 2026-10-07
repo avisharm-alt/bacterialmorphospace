@@ -48,8 +48,12 @@ missing values. The five-trait panel has 3,087 missing spore labels; they are
 never imputed or used in the spore task.
 
 The two panels share 2,580 species but select different assemblies for 32 of
-them. Among shared species, their selected strain labels differ in 1 Gram,
-1 shape, 4 motility, and 4 oxygen cases. Tasks use one panel at a time, so
+them. For **33 shared species**, the core-selected strain has a spore label
+but the no-spore-selected strain's spore label is missing: 32 have different
+assemblies, while one has the same assembly but a different BacDive strain.
+There are no disagreements where both spore labels are observed. Among shared
+species, the selected strain labels also differ in 1 Gram, 1 shape, 4 motility,
+and 4 oxygen cases. Tasks use one panel at a time, so
 these alternatives cannot cross a train/test split. The committed species
 tables omit raw BacDive observations and conflict flags; a full reference and
 assay audit requires regenerating the ignored joined Parquet from the original
@@ -77,7 +81,10 @@ a new genome must run a comparable taxonomy assignment first.
   there are no sequence results in this report.
 
 The metrics are balanced accuracy and macro F1 over the fixed coarse classes.
-All 20 test folds contained every class, including the rare temperature bins.
+All 20 **full-panel** test folds contained every class, including the rare
+temperature bins. In subset runs a fold missing a class in train or test has
+undefined overall metrics and is counted in `valid_repeats` rather than scored
+on fewer classes.
 The ranges below are 2.5th–97.5th percentiles over 20 resplits: **split
 variability**, not confidence intervals for independent samples. Test species
 can recur across repeats. Per-fold sample sizes and metrics are in
@@ -159,8 +166,9 @@ Stage 2 taxonomy map are, respectively,
 `c991b33af7d4b0282c3002f8568008e504084fc6720b2f383b18ba74ba06afb9`,
 and `32d5460564179557c3c246f88e36fb91a774be1d53426faa70a7e6b8c1a35c78`.
 This run used Python 3.12.14, pandas 3.0.6, NumPy 2.5.3, SciPy 1.18.1,
-and pytest 9.1.1. `python -m pytest -q` passed 165 tests, including split,
-duplicate accession, train-only prediction, and contig-boundary checks.
+and pytest 9.1.1. `python -m pytest -q` passed 169 tests, including split,
+duplicate accession, train-only prediction, subset, missing-label, and
+contig-boundary checks.
 
 **Next experiment:** acquire assembly FASTAs for a prespecified, balanced
 subset, verify accession and sequence hashes, and run the fixed 4-mer baseline
@@ -169,6 +177,36 @@ before interpreting a sequence score. Then decide whether exact/near-duplicate
 screening against a tractable OpenGenome2 manifest and Evo 2 feature extraction
 are practical. Evo 2 should be considered only after the taxonomy and 4-mer
 comparison, with pretraining exposure explicitly stratified or excluded.
+
+### Prespecified FASTA pilot
+
+[`stage2_fasta_pilot_accessions.txt`](../data/final/stage2_fasta_pilot_accessions.txt)
+freezes **192 exact NCBI assembly accessions** that appear with the same BacDive
+strain in both panels. Its SHA256 is
+`db50a31e3478e2edf368f8747249c1e93745b8c06af78f5ae54f491190e51205`.
+The pilot spans 20 orders (3–10 assemblies per order) and intentionally covers
+all 24 available psychrophile-labelled common rows plus at least 24 examples
+of each other rare coarse category targeted during selection. It is **enriched
+for rare labels** and is a feasibility set, not an unbiased estimate of the
+full-panel population. The exact list, rather than a performance-based choice
+of taxa, defines the next FASTA acquisition task.
+
+```bash
+python -m src.stage2 benchmark --repeats 20 --accession-subset data/final/stage2_fasta_pilot_accessions.txt
+python -m src.stage2 benchmark --repeats 20 --accession-subset data/final/stage2_fasta_pilot_accessions.txt --fasta-dir PATH
+```
+
+The first command was run without FASTAs and writes prevalence/taxonomy pilot
+results to [`stage2_subset/`](stage2_subset/), separate from the full-panel
+tables. Its [`stage2_run.json`](stage2_subset/stage2_run.json) records the exact
+accessions, file and canonical-list hashes, panel hashes, seeds, repeats, and
+models. The fold-level table records train and test accession hashes, shared
+by every model in a fold. The second command requires all 192 files as
+`<ncbi_assembly_accession>.fna` or `.fna.gz`; it uses the same split indices
+for prevalence, taxonomy, and 4-mers and parses each FASTA once across traits.
+No sequence score is available yet. Some pilot held-order test folds omit a
+class (e.g. only 17/20 temperature folds are fully evaluable), so subsequent
+pilot results must report valid fold counts beside scores.
 
 ## Separate vertebrate morphology lead
 

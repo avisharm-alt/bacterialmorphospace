@@ -237,13 +237,15 @@ curl -fsSL https://data.gtdb.ecogenomic.org/releases/release232/232.0/bac120_tax
 curl -fsSL https://data.gtdb.ecogenomic.org/releases/release220/220.0/bac120_taxonomy_r220.tsv.gz -o data/raw/gtdb/bac120_taxonomy_r220.tsv.gz
 python -m src.stage2 prepare
 python -m src.stage2 benchmark --repeats 20
+python -m src.stage2 benchmark --repeats 20 --accession-subset data/final/stage2_fasta_pilot_accessions.txt
 python -m pytest -q
 ```
 
 The benchmark needs only the committed species tables and Stage 2 taxonomy
 mapping. Its audit and fold-level, summary, and distance tables are written to
-`reports/`. If assembly FASTAs are supplied as
-`<ncbi_assembly_accession>.fna` or `.fna.gz` in one directory, add
-`--fasta-dir PATH` to run the fixed 4-mer centroid baseline on the *same*
-splits. All assemblies for each trait panel must be present; incomplete
-sequence coverage is rejected instead of silently changing the test set.
+`reports/`. The committed 192-accession pilot list writes separate results to
+`reports/stage2_subset/`, including the exact list and SHA256 in
+`stage2_run.json`. Supply FASTAs named `<ncbi_assembly_accession>.fna` or
+`.fna.gz` in one directory and add `--fasta-dir PATH` to the pilot command to
+run the fixed 4-mer centroid baseline on the *same* splits as prevalence and
+taxonomy. Every listed FASTA is required; missing files raise an error.

@@ -1,0 +1,139 @@
+{
+  "core": {
+    "species": 192,
+    "unique_genomes": 192,
+    "gtdb_v220_exact": 164,
+    "gtdb_v220_stem": 164,
+    "taxa": {
+      "genus": 149,
+      "family": 66,
+      "order": 20,
+      "class": 6,
+      "phylum": 4
+    },
+    "labels": {
+      "gram": {
+        "negative": 118,
+        "positive": 74
+      },
+      "shape": {
+        "rod": 140,
+        "other": 26,
+        "coccus": 26
+      },
+      "motility": {
+        "no": 113,
+        "yes": 79
+      },
+      "spore": {
+        "no": 141,
+        "yes": 51
+      },
+      "oxygen": {
+        "aerobe": 131,
+        "facultative": 31,
+        "anaerobe": 30
+      },
+      "temperature": {
+        "meso": 144,
+        "psychro": 24,
+        "thermo": 24
+      }
+    },
+    "label_missing": {
+      "gram": 0,
+      "shape": 0,
+      "motility": 0,
+      "spore": 0,
+      "oxygen": 0,
+      "temperature": 0
+    },
+    "match_method": {
+      "accession": 188,
+      "designation": 4
+    },
+    "temperature_source": {
+      "optimum": 161,
+      "growth_range": 23,
+      "growth_single_point": 8
+    },
+    "shape_other": 26,
+    "microaerophile_folded": 3
+  },
+  "no_spore": {
+    "species": 192,
+    "unique_genomes": 192,
+    "gtdb_v220_exact": 164,
+    "gtdb_v220_stem": 164,
+    "taxa": {
+      "genus": 149,
+      "family": 66,
+      "order": 20,
+      "class": 6,
+      "phylum": 4
+    },
+    "labels": {
+      "gram": {
+        "negative": 118,
+        "positive": 74
+      },
+      "shape": {
+        "rod": 140,
+        "other": 26,
+        "coccus": 26
+      },
+      "motility": {
+        "no": 113,
+        "yes": 79
+      },
+      "spore": {
+        "no": 141,
+        "yes": 51
+      },
+      "oxygen": {
+        "aerobe": 131,
+        "facultative": 31,
+        "anaerobe": 30
+      },
+      "temperature": {
+        "meso": 144,
+        "psychro": 24,
+        "thermo": 24
+      }
+    },
+    "label_missing": {
+      "gram": 0,
+      "shape": 0,
+      "motility": 0,
+      "spore": 0,
+      "oxygen": 0,
+      "temperature": 0
+    },
+    "match_method": {
+      "accession": 188,
+      "designation": 4
+    },
+    "temperature_source": {
+      "optimum": 161,
+      "growth_range": 23,
+      "growth_single_point": 8
+    },
+    "shape_other": 26,
+    "microaerophile_folded": 3
+  },
+  "cross_panel": {
+    "shared_species": 192,
+    "different_assembly": 0,
+    "core_spore_present_no_spore_missing": 0,
+    "spore_missing_different_assembly": 0,
+    "spore_missing_same_assembly": 0,
+    "spore_nonmissing_disagreement": 0,
+    "different_labels": {
+      "gram": 0,
+      "shape": 0,
+      "motility": 0,
+      "oxygen": 0,
+      "temperature": 0
+    }
+  }
+}
