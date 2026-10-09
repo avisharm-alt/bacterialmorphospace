@@ -1,6 +1,6 @@
 # Phase 2 spec: Pfam presence/absence as the fifth LOPO model
 
-Status: **APPROVED decisions D1-D6. D7 (the confirmatory contrast, section 7) is recorded but disputed: see the erratum there.** This file is
+Status: **APPROVED decisions D1-D6. The confirmatory contrast (section 7) has two recorded definitions; which governs is PENDING AVIN'S DECISION.** This file is
 committed before any Pfam model is fitted to labels, so the pre-specification below is timestamped by git history.
 
 ## 1. Question
@@ -68,7 +68,18 @@ All four targets: **motility is the primary target**; `shape_rod`, `oxygen_aerob
 split and the correction are stated in the output itself. Replication across traits is the point, so multiplicity only
 matters if annotation is positive on one trait and that is claimed.
 
-## 7. The confirmatory contrast (D7, APPROVED 2026-10-07; fixed before any Pfam model is fitted)
+## 7. The confirmatory contrast: two recorded definitions, governing one PENDING AVIN'S DECISION
+
+Two sessions recorded different definitions on two branches. Both records are kept below with their commit times, and the
+results are presented under each in `reports/phase2_pfam_report.md` (section 6). Until the project owner decides, every Pfam number is
+descriptive and none is called confirmatory.
+
+| record | where | committed (UTC) | quantity | relation to the first real-label fit |
+|---|---|---|---|---|
+| **S** | `origin/claude/optimistic-newton-6lf55q`, commit `54ab784` | 2026-10-07 02:25:34 | macro within-phylum AUC of `pfam` against the within-phylum shuffle null, one-sided, 999 permutations | before the first real-label result (`52e5538`, 02:55:56) |
+| **A (D7)** | this branch, commit `35efc23` | 2026-10-07 02:59:37 | macro within-phylum AUC of `pfam` minus `kmer_genome`, two-sided bootstrap p | after the first real-label result existed elsewhere |
+
+### 7.1 Record A (D7), as recorded on this branch
 
 D6 fixes the correction but not the single quantity the p-values come from. Needed: which contrast defines "annotation
 comes out positive" for the primary test and for the BH family. The answer is recorded here before any Pfam result exists.
@@ -102,6 +113,26 @@ Common to every option (so the choice is only about which pair of models):
 Rationale for A (recommended, then chosen): it is the cleanest test of the claim "annotation comes out positive" that D6's wording tracks, and it
 does not depend on how well Evo 2 does (which the earlier result puts near chance across phyla). B and C are then reported
 as descriptive decompositions of the gap to Evo 2.
+
+### 7.2 Record S, as recorded on `origin/claude/optimistic-newton-6lf55q` (commit `54ab784`, 2026-10-07 02:25:34 UTC)
+
+Transcribed from that branch's spec for the record; this branch has not adopted it.
+
+**The single confirmatory quantity per target** is *Pfam above chance*: T = the macro within-phylum AUC of the `pfam` model
+(equal-weight mean over the held-out phyla whose AUC is defined, as in the existing macro), tested one-sided against the
+within-phylum shuffle null: p = (1 + #{null macro >= T}) / (1 + n_perm), where each null draw permutes labels within every phylum,
+refits the two-stage filter on the permuted training labels, and keeps the chosen K and C.
+
+- n_perm = 999 for the four confirmatory runs (smallest p = 0.001). n_boot = 1000, seed 20260929, depth 10.
+- Motility (primary) is tested alone at alpha = 0.05.
+- `shape_rod`, `oxygen_aerobe`, `oxygen_facultative` (secondary) are Benjamini-Hochberg corrected across these three p-values at FDR 0.05.
+- Everything else is descriptive, with no p-value: Evo 2 vs Pfam and vs the matched-window control, Pfam vs k-mer(genome), per-phylum AUCs, chosen K per fold, and the prevalence-threshold sensitivity (min-prev 1% and 5%, motility, n_perm 50). The `pfam_windows` null p-value is also computed but is not part of the confirmatory family.
+- Calibration done before that record was fixed, on shuffled labels and simulated no-signal data only: mean macro AUC 0.4971 +- 0.0075 (SE) over 60 no-signal datasets and a null mean of 0.4967 +- 0.0049; a deliberately leaky global ranking gives 0.7194 +- 0.0052. Real-labelled Pfam results had not been seen.
+
+### 7.3 Where the two definitions give different readings
+
+Computed in `reports/phase2_pfam_report.md`, section 6. Under S, Pfam is above the shuffle null on all four targets. Under A, Pfam is ahead of
+whole-genome k-mers on motility, `shape_rod` and `oxygen_aerobe` but not on `oxygen_facultative`. This is not a decision between them.
 
 ## 8. Implementation order
 
