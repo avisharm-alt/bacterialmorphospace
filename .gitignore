@@ -16,3 +16,6 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 .venv/
+
+# drosophila_wings: raw and derived data live in /mnt/project-files/data/drosophila (or --data-dir), never in git
+drosophila_wings/data/
