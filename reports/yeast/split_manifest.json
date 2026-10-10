@@ -1,0 +1,33 @@
+{
+  "gene": {
+    "counts": {
+      "train": 3285,
+      "unused": 1974,
+      "test": 703,
+      "val": 703
+    },
+    "sha256": "f771a71b0cbf8ad70655b9942026980e7db30c683d62717219293dab3d881c9e"
+  },
+  "composition": {
+    "counts": {
+      "train": 3579,
+      "unused": 1974,
+      "val": 632,
+      "test": 476,
+      "buffer": 4
+    },
+    "sha256": "c48bd4d0624ec4b95378f0ee4f54d7ebc7cdc0600b3bcf73bdd0827d535d81ce"
+  },
+  "background": {
+    "counts": {
+      "train": 6068,
+      "val": 297,
+      "test": 295,
+      "unused": 5
+    },
+    "sha256": "9f0d653ae255ef7887dd62bddb1829e37fedfa238698227bcb2fed2e2c6e97da"
+  },
+  "seed": 20261010,
+  "dataset_sha256": "7c73509e3fe5d0bff80fa768b2ee21ab25cd2da41cd1385cdf892a89b896660f",
+  "homology_groups_sha256": null
+}

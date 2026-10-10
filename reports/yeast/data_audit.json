@@ -1,0 +1,69 @@
+{
+  "datasets": {
+    "single": {
+      "source_rows": 4718,
+      "matched_genes": 4691,
+      "missing_sequence_genes": [
+        "YAL043C-A",
+        "YAL058C-A",
+        "YAR037W",
+        "YAR040C",
+        "YAR043C",
+        "YDL038C",
+        "YDL134C-A",
+        "YER108C",
+        "YGL154W",
+        "YGR272C",
+        "YIL015C-A",
+        "YIL168W",
+        "YIR020W-B",
+        "YIR044C",
+        "YLR391W",
+        "YML010C-B",
+        "YML010W-A",
+        "YML013C-A",
+        "YML033W",
+        "YML035C-A",
+        "YML048W-A",
+        "YML058C-A",
+        "YML095C-A",
+        "YML102C-A",
+        "YML117W-A",
+        "YMR158C-B",
+        "YMR158W-A"
+      ],
+      "missing_target_entries": 0,
+      "control_cultures": 122
+    },
+    "triple": {
+      "source_rows": 1982,
+      "matched_genes": 1974,
+      "missing_sequence_genes": [
+        "YAL058C-A",
+        "YAR037W",
+        "YGR272C",
+        "YIR020W-B",
+        "YLR391W",
+        "YML010C-B",
+        "YML013C-A",
+        "YML033W"
+      ],
+      "missing_target_entries": 2,
+      "control_cultures": 749
+    }
+  },
+  "n_traits": 501,
+  "n_features": 422,
+  "n_rows": 6665,
+  "exact_sequence_groups": 4668,
+  "duplicate_sequence_extra_genes": 23,
+  "sources": {
+    "mt4718data.tsv": "c4ba1e84b4ea6273f0162ef9230e15634933c8c0c4910dd7546a21c6293e0fc0",
+    "wt122data.tsv": "ab2c31b5150b2a33c15b5d22f1bef8687719975223559a740ea233c1f67b27c3",
+    "quad1982data.tsv": "5a1d45005c1249a77b0608ee7e6678c045c14464cf67bfc149b24fcaeb4854c0",
+    "wt749data.tsv": "4603aadf6ae5a3187e447c5d0df1f6bfb30a2292ddb687beb9a871b14769094d",
+    "orf_trans_all.fasta.gz": "17e8b47e1ae23178c6000fbc4ab548f102d1b250ef9dff5d811feb3f03dd2c5b"
+  },
+  "dataset_sha256": "7c73509e3fe5d0bff80fa768b2ee21ab25cd2da41cd1385cdf892a89b896660f",
+  "target_unit": "WT-standardized culture-level aggregate morphology, not single-cell measurements"
+}

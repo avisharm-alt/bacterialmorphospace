@@ -1,0 +1,7 @@
+{
+  "mt4718data.tsv": {"url": "http://www.yeast.ib.k.u-tokyo.ac.jp/SCMD/download.php?path=mt4718data.tsv", "sha256": "c4ba1e84b4ea6273f0162ef9230e15634933c8c0c4910dd7546a21c6293e0fc0"},
+  "wt122data.tsv": {"url": "http://www.yeast.ib.k.u-tokyo.ac.jp/SCMD/download.php?path=wt122data.tsv", "sha256": "ab2c31b5150b2a33c15b5d22f1bef8687719975223559a740ea233c1f67b27c3"},
+  "quad1982data.tsv": {"url": "http://www.yeast.ib.k.u-tokyo.ac.jp/SCMD/download.php?path=quad1982data.tsv", "sha256": "5a1d45005c1249a77b0608ee7e6678c045c14464cf67bfc149b24fcaeb4854c0"},
+  "wt749data.tsv": {"url": "http://www.yeast.ib.k.u-tokyo.ac.jp/SCMD/download.php?path=wt749data.tsv", "sha256": "4603aadf6ae5a3187e447c5d0df1f6bfb30a2292ddb687beb9a871b14769094d"},
+  "orf_trans_all.fasta.gz": {"url": "https://downloads.yeastgenome.org/sequence/S288C_reference/orf_protein/orf_trans_all.fasta.gz", "sha256": "17e8b47e1ae23178c6000fbc4ab548f102d1b250ef9dff5d811feb3f03dd2c5b"}
+}

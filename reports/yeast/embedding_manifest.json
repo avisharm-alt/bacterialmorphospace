@@ -1,0 +1,13 @@
+{
+  "model": "esm2_t12_35M_UR50D",
+  "layer": 12,
+  "pooling": "residue-weighted mean over all nonoverlapping <=1000-aa chunks",
+  "n_genes": 4691,
+  "features": 480,
+  "nonstandard_residue_policy": "Internal stops and noncanonical residues mapped to X; terminal stops removed by FASTA loader",
+  "nonstandard_residues": 12,
+  "sequence_sha256": "17e8b47e1ae23178c6000fbc4ab548f102d1b250ef9dff5d811feb3f03dd2c5b",
+  "sha256": "ff4e702520db888b2234115733d4430eebcc57fb72d92d5aa7bfd4a4435eb390",
+  "seconds": 231.321762303,
+  "pretraining_note": "Yeast exposure is not excluded. No phenotype annotations used."
+}

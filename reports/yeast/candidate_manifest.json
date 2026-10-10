@@ -1,0 +1,13 @@
+{
+  "candidate_count": 2716,
+  "model": "diffusion",
+  "training_run": "/Users/avinsharma/Documents/ChatGPT/Bacterial Morphospace/reports/yeast/runs/esm-background",
+  "training_config_sha256": "c0420923f05292b6039e4eb0f75229ce2094d0420d8ec472725c9dccb4de1a79",
+  "selection": "single deletion measured; triple-background combination unmeasured",
+  "novelty_definition": "fraction of all predictive samples with positive area and axis ratio >=1 in 1-WT-SD area/elongation bins unoccupied by measured triple-background cultures",
+  "warnings": [
+    "Sampling bias and batch effects can create unoccupied regions.",
+    "High novelty probability is not confidence, viability, or validated extrapolation.",
+    "No measured target exists here: candidates require experimental validation."
+  ]
+}
