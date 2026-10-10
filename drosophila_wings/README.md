@@ -123,3 +123,99 @@ in `/mnt/project-files/data/drosophila/results/`.
   split. That is the leaky gain.
 - **Sensitivity.** The result holds at other thresholds: GBLUP R² is +0.009 at 0.2 and −0.002 at 0.05.
 - **Covariates.** OLS on the inversion and Wolbachia covariates overfits slightly (R² below 0).
+
+# Step 3: genotype-conditioned diffusion model
+
+`diffusion.py` is a small conditional denoising diffusion model (MLP denoiser with FiLM conditioning, cosine schedule,
+ancestral sampling) over whitened shape PCs of the aligned wings. It is conditioned on a genotype code (the top 10
+genomic PCs of the training lines' GRM; other lines are projected onto them) and on sex. The genotype code is dropped for
+15% of training wings, so the same network also gives a genotype-free model. `generative.py` trains it per fold, generates
+wings for every held-out line and scores them; `diffusion_cv.py` is the entry point; `modal_app.py` runs the folds on Modal
+T4 GPUs.
+
+```bash
+pip install torch 'modal[api-proxy-support]' matplotlib   # MODAL_TOKEN_ID / MODAL_TOKEN_SECRET must be set
+python -m drosophila_wings.diffusion_cv run --backend modal               # about 10 minutes, 16 GPU containers
+python -m drosophila_wings.diffusion_cv run --backend local --quick       # CPU smoke test (writes "QUICK CPU TEST")
+```
+
+The outer folds are copied from the baseline's `results/per_line_errors.csv`, so step 3 is scored on exactly the step 2
+held-out lines. Outputs go to `results/diffusion/`: `diffusion_report.md`, `diffusion_metrics.json`, `per_line_scores.csv`,
+`summary_test_lines.csv`, the possibility-space tables and samples, and three figures.
+
+**What is compared on each held-out line** (all sex-matched to its real wings):
+
+| method | what it is |
+|---|---|
+| `mean+resid` | training mean shape + real within-line scatter from training lines: the baseline to beat |
+| `pooled` | random training wings (the population, so far too spread out for one line) |
+| `diffusion-geno` / `-nogeno` | the diffusion model with / without the line's genotype code |
+| `diffusion-shuffled` | the same model trained with genotype codes shuffled across training lines (control) |
+| `diffusion-resid-*` | a model trained on within-line residuals only, added to the training mean: does genotype predict the scatter? |
+| `oracle-mean+...` | the same scatter generators added to the line's own observed mean (not achievable; tests spread alone) |
+
+Scores: energy distance between generated and real wings (whole distribution), the step 2 R² on the generated line mean,
+and the within-line variance (spread) of generated vs real wings.
+
+## Step 3 results on the real data (2026-10-10)
+
+166 lines, 22,593 wings, 5 related-grouped folds, 512 generated wings per held-out line. Full report:
+`/mnt/project-files/data/drosophila/results/diffusion/diffusion_report.md`.
+
+| held-out lines | energy ×10⁻³ | line-mean R² vs mean | spread log ratio | spread r across lines |
+|---|---|---|---|---|
+| `mean+resid` (baseline) | 16.4 | 0.001 | +0.01 | −0.07 |
+| `diffusion-geno` | 15.4 | −0.047 | +0.86 | −0.08 |
+| `diffusion-nogeno` | 14.5 | −0.004 | +0.89 | 0.02 |
+| `diffusion-shuffled` | 15.6 | −0.071 | +0.89 | 0.00 |
+| `diffusion-resid-geno` | 16.8 | 0.000 | −0.17 | 0.04 |
+| `diffusion-resid-nogeno` | 16.8 | −0.002 | −0.15 | 0.04 |
+
+- **Genotype does not help on new lines, for the mean or for the spread.** The genotype-conditioned model is no better than
+  the same model with genotype dropped or shuffled. Its line means are slightly worse than the training mean (R² −0.047),
+  matching the step 2 result.
+- **Why: held-out genotype codes are short.** Training lines' codes have mean length 2.47, held-out lines' 0.66. An
+  unrelated DGRP line projects near the centre of the training lines' genomic PCs, so the model treats it as "a typical
+  line" and generates something close to the whole population.
+- **The lower energy distances are hedging, not knowledge.** `pooled` and `diffusion-nogeno` beat the baseline on energy
+  distance (about 90% of lines) only because they are 2–3 times too spread out (log ratio about +0.9). When the mean is
+  unknown, a broad cloud covers the line's real wings better than a tight cloud in the wrong place. The genotype model does
+  not beat its own genotype-free version.
+- **Within-line spread is a real, reliable trait** (split-half reliability of log within-line variance 0.90), and the
+  residual model learns it for lines it has seen (r = 0.47 between generated and real spread on training lines). It does
+  not transfer to new lines (r = 0.04), and related pairs share little of it (similarity 0.03 for 20 pairs above 0.2).
+- **The model is somewhat under-dispersed.** Generated residual scatter is about 15% too narrow (log ratio −0.15), which is
+  why `diffusion-resid-*` lose to `mean+resid` on energy. On whole wings, generated samples are about 20% too narrow in
+  whitened units before sampling-step tuning; this is a known MLP-diffusion limitation and does not change the comparison
+  between conditioned, genotype-free and shuffled versions of the same model.
+- **Possibility space sketch** (one model on all 166 lines). Generated line means for random genotype codes, crosses and 2×
+  extrapolated codes all fall inside the observed 95% region and span 20–45% of the observed between-line variance. The
+  model reproduces a contracted version of the observed shape space; it does not open new regions, because the genotype
+  code carries no transferable signal.
+
+**Next.** A genotype representation that transfers between unrelated lines is the bottleneck, not the generator: candidate
+genes or SNP sets from published wing-shape GWAS (Pitchers et al. 2019's hits), gene-level burden scores, or embeddings
+of the variants themselves, all scored on the same grouped folds. Mapping the possibility space without genotype (the
+genotype-free model, or conditioning on observed line means) is possible now.
+
+## Step 3b: gene-informed genotype codes (2026-10-10)
+
+`python -m drosophila_wings.diffusion_cv codes` builds per-fold codes (`genecodes.py`); `run --codes wing-genes fold-gwas
+pitchers-hits` scores the diffusion model with each, next to genomic PCs. A code is a line's phenotype predicted by kernel
+ridge from one SNP set, fitted on training lines only (out-of-fold for the training lines themselves). Gene coordinates
+are UCSC dm3 FlyBase tables in `raw/annotation/`.
+
+| held-out lines | ridge alone: shape R² | diffusion: energy ×10⁻³ (geno / no-geno / shuffled) | diffusion: line-mean R² |
+|---|---|---|---|
+| genomic PCs | −0.001 (step 2) | 15.4 / 14.5 / 15.6 | −0.047 |
+| `wing-genes` (82 genes ±5 kb, 45k SNPs) | 0.000 | 16.2 / 14.5 / 16.0 | −0.097 |
+| `fold-gwas` (top 2,000, re-selected in fold) | −0.049 | 18.6 / 14.5 / 18.2 | −0.211 |
+| `pitchers-hits` (831 published hits; leaky) | +0.045 | 17.1 / 14.5 / 17.8 | −0.109 |
+
+- **No gene-informed code helps.** Every conditioned model is worse than the genotype-free model and no better than its
+  own shuffled control, for line means and for within-line spread (spread r across held-out lines between −0.08 and +0.07).
+- **The only positive number is leaky.** Ridge on the published hits reaches R² +0.18 in four folds (−0.49 in the fifth),
+  because those SNPs were picked using the held-out lines. Re-selecting SNPs inside each fold (`fold-gwas`) gives −0.05.
+- **Sharper codes make the diffusion model worse.** Gene codes give each line a distinctive value, so the model uses them
+  as a line ID: training lines are reproduced almost exactly (energy 0.03×10⁻³ for `fold-gwas`), and new lines get a
+  confident wrong answer instead of a hedge.
