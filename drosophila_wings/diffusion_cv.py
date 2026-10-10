@@ -27,22 +27,22 @@ log = logging.getLogger("drosophila_wings")
 
 
 def _run_jobs(backend: str, payload, folds, cfg, args) -> tuple[list[dict], dict]:
-    jobs = [(int(f), v) for v in gm.VARIANTS for f in folds]
+    jobs = [(int(f), v, c) for c in [None] + list(args.codes) for v in gm.VARIANTS for f in folds]
     if backend == "modal":
         import modal
 
         from .modal_app import app, fold_remote, full_remote
         with modal.enable_output(), app.run():
             full_call = full_remote.spawn(payload, cfg, args.geno_pcs, args.seed) if args.space else None
-            res = list(fold_remote.starmap([(payload, f, cfg, args.n_gen, args.geno_pcs, s, args.seed) for f, s in jobs]))
+            res = list(fold_remote.starmap([(payload, f, cfg, args.n_gen, args.geno_pcs, s, args.seed, c) for f, s, c in jobs]))
             full = full_call.get() if full_call is not None else None
         return res, full
     res = []
-    for f, s in jobs:
+    for f, s, c in jobs:
         t0 = time.time()
-        res.append(gm.run_fold(payload, f, cfg, n_gen=args.n_gen, n_geno_pc=args.geno_pcs, variant=s, seed=args.seed,
+        res.append(gm.run_fold(payload, f, cfg, n_gen=args.n_gen, n_geno_pc=args.geno_pcs, variant=s, seed=args.seed, code=c,
                                score_train=not args.quick))
-        log.info("fold %d %s done in %.0fs", f, s, time.time() - t0)
+        log.info("fold %d %s %s done in %.0fs", f, s, c, time.time() - t0)
     full = gm.run_full(payload, cfg, n_geno_pc=args.geno_pcs, seed=args.seed,
                        n_synth=40 if args.quick else 400, n_per_synth=64 if args.quick else 128,
                        n_per_line=64 if args.quick else 256) if args.space else None
@@ -130,6 +130,56 @@ def plots(out: Path, d: gm.WingData, rec: pd.DataFrame, full: dict | None, Vt: n
     return made
 
 
+def line_logvar(d: gm.WingData) -> np.ndarray:
+    li = {l: i for i, l in enumerate(d.lines)}
+    wl = np.array([li[l] for l in d.wing_line])
+    return np.array([np.log(gm.cell_summary(d.V[wl == i], d.sex[wl == i], np.unique(d.sex[wl == i]))[1])
+                     for i in range(len(d.lines))])
+
+
+def cmd_codes(args) -> None:
+    """Gene-informed genotype codes for every outer fold -> derived/gene_codes.npz and results/diffusion/gene_codes_check.json."""
+    from . import genecodes, relatedness
+    data_dir = Path(args.data_dir)
+    raw = data_dir / "raw"
+    d = gm.load(data_dir / "derived", data_dir / "results")
+    z = np.load(data_dir / "derived" / "genotypes_filtered.npz", allow_pickle=True)
+    glines = [str(x) for x in z["lines"]]
+    G = z["G"][[glines.index(l) for l in d.lines]]
+    chrom, pos = z["chrom"].astype(str), z["pos"]
+    genes = genecodes.wing_gene_names(raw / "pitchers2019" / "FileS5.xlsx")
+    spans = genecodes.gene_spans(raw / "annotation", genes)
+    fixed = {"wing-genes": genecodes.snps_near(chrom, pos, spans, args.flank),
+             "pitchers-hits": genecodes.pitchers_hits(raw / "pitchers2019" / "FileS3.xlsx", chrom, pos),
+             "fold-gwas": None}
+    info = {"wing_genes_named": len(genes), "wing_genes_mapped": int(spans["symbol"].nunique()),
+            "wing_genes_unmapped": sorted(set(genes) - set(spans["symbol"])), "flank_bp": args.flank,
+            "n_snps": {k: (int(len(v)) if v is not None else args.n_top) for k, v in fixed.items()}, "checks": []}
+    log.info("SNP sets: %s", info["n_snps"])
+    groups = relatedness.related_groups(d.K, 0.1)
+    logvar = line_logvar(d)
+    folds = sorted(set(d.folds.tolist()))
+    out = {k: np.zeros((len(folds), len(d.lines), 11), dtype=np.float32) for k in args.sets}
+    for f in folds:
+        train, test = np.flatnonzero(d.folds != f), np.flatnonzero(d.folds == f)
+        T = genecodes.targets(d.Y, logvar, train)
+        for k in args.sets:
+            t0 = time.time()
+            std, raw_pred = genecodes.fold_codes(G, T, groups, train, k, fixed[k], n_top=args.n_top,
+                                                 rng=np.random.default_rng(args.seed + f))
+            out[k][f] = std
+            chk = {"fold": f, "code": k, **genecodes.code_check(T, raw_pred, train, test)}
+            info["checks"].append(chk)
+            log.info("%s (%.0fs)", chk, time.time() - t0)
+    np.savez_compressed(data_dir / "derived" / "gene_codes.npz", lines=np.array(d.lines), **out)
+    res = data_dir / "results" / "diffusion"
+    res.mkdir(parents=True, exist_ok=True)
+    c = pd.DataFrame(info["checks"])
+    info["summary"] = c.groupby("code")[["shape_pc_r2", "spread_r2", "spread_r"]].mean().reset_index().to_dict(orient="records")
+    (res / "gene_codes_check.json").write_text(json.dumps(info, indent=2, default=float))
+    log.info("summary %s", info["summary"])
+
+
 def cmd_run(args) -> None:
     data_dir = Path(args.data_dir)
     out = Path(args.out) if args.out else data_dir / "results" / "diffusion"
@@ -150,8 +200,13 @@ def cmd_run(args) -> None:
                         d.Y[li], d.folds[li], d.consensus)
         folds = folds[:2]
     log.info("lines %d, wings %d, folds %s, cfg %s", len(d.lines), len(d.V), folds, cfg)
+    payload = d.to_payload()
+    if args.codes:
+        gc = np.load(data_dir / "derived" / "gene_codes.npz")
+        assert list(gc["lines"]) == d.lines, "gene_codes.npz is for a different line set; rerun `codes`"
+        payload["codes"] = {k: gc[k] for k in args.codes}
     t0 = time.time()
-    results, full = _run_jobs(args.backend, d.to_payload(), folds, cfg, args)
+    results, full = _run_jobs(args.backend, payload, folds, cfg, args)
     log.info("all jobs done in %.0fs", time.time() - t0)
 
     rec = pd.DataFrame([r for res in results for r in res["records"]])
@@ -177,15 +232,18 @@ def cmd_run(args) -> None:
                             **{f"means_{k.split()[0]}": v for k, v in full["line_means"].items()})
     figs = plots(out, d, rec, full, Vt, samples)
 
-    code_norms = {"train": float(np.mean([r["code_norm_train"] for r in results])),
-                  "test": float(np.mean([r["code_norm_test"] for r in results]))}
+    code_norms = {"train": float(np.mean([r["code_norm_train"] for r in results if r["code"] == "genomic-pcs"])),
+                  "test": float(np.mean([r["code_norm_test"] for r in results if r["code"] == "genomic-pcs"]))}
+    norms_by_code = {c: {"train": float(np.mean([r["code_norm_train"] for r in results if r["code"] == c])),
+                         "test": float(np.mean([r["code_norm_test"] for r in results if r["code"] == c]))}
+                     for c in {r["code"] for r in results}}
     spread_rel = gm.spread_reliability(d, np.random.default_rng(args.seed))
-    metrics = {"quick_test": bool(args.quick), "genotype_code_norm": code_norms, "spread_reliability": spread_rel, "backend": args.backend, "n_lines": len(d.lines), "n_wings": int(len(d.V)),
+    metrics = {"quick_test": bool(args.quick), "genotype_code_norm": code_norms, "code_norms_by_code": norms_by_code, "spread_reliability": spread_rel, "backend": args.backend, "n_lines": len(d.lines), "n_wings": int(len(d.V)),
                "folds": folds, "config": cfg, "genotype_pcs": args.geno_pcs, "n_gen_per_line": args.n_gen,
                "n_shape_pcs": results[0]["n_shape_pcs"], "seconds": round(time.time() - t0),
                "summary_test_lines": summ.to_dict(orient="records"),
                "train_lines_mean": tr.reset_index().to_dict(orient="records"),
-               "loss_curves": {f"fold{r['fold']}-{r['variant']}": r["loss_curve"] for r in results},
+               "loss_curves": {f"fold{r['fold']}-{r['variant']}-{r['code']}": r["loss_curve"] for r in results},
                "possibility_space": None if space is None else space.to_dict(orient="records")}
     (out / "diffusion_metrics.json").write_text(json.dumps(metrics, indent=2, default=float))
     report(out, args, d, summ, tr, space, figs, metrics)
@@ -219,6 +277,8 @@ def report(out, args, d, summ, tr, space, figs, metrics) -> None:
     order = ["mean+resid", "pooled", "diffusion-nogeno", "diffusion-geno", "diffusion-shuffled", "diffusion-resid-nogeno",
              "diffusion-resid-geno", "oracle-mean+resid", "oracle-mean+diffusion-resid-nogeno",
              "oracle-mean+diffusion-resid-geno"]
+    codes = sorted({m[m.index("[") + 1:-1] for m in S.index if "[" in m})
+    order = [o for o in order] + [f"{o}[{c}]" for c in codes for o in order if o.startswith(("diffusion", "oracle-mean+diffusion"))]
     for m in [o for o in order if o in S.index]:
         r = S.loc[m]
         L.append(f"| {m} | {_fmt(r.energy_mean * 1e3)} | {_fmt(r.lines_better_than_reference, 2)} | "
@@ -227,6 +287,27 @@ def report(out, args, d, summ, tr, space, figs, metrics) -> None:
     L += ["", "`mean+resid` is the baseline to beat (training mean shape plus real within-line scatter). "
           "`oracle-mean+resid` uses the held-out line's own observed mean and is not achievable; it shows how much a "
           "perfect mean prediction would be worth.", ""]
+    chk_file = out / "gene_codes_check.json"
+    if codes and chk_file.exists():
+        chk = json.loads(chk_file.read_text())
+        L += ["## Gene-informed genotype codes", "",
+              "Rows marked `[code]` use a gene-informed code instead of genomic PCs: each line's phenotype predicted by kernel "
+              "ridge from a SNP set (top 10 line-mean shape PCs plus log within-line variance), fitted on training lines only, "
+              "with out-of-fold predictions for the training lines themselves.", "",
+              f"- `wing-genes`: SNPs within ±{chk['flank_bp'] // 1000} kb of the {chk['wing_genes_mapped']} of "
+              f"{chk['wing_genes_named']} wing-development genes knocked down in Pitchers et al. 2019 that map to dm3 "
+              f"({chk['n_snps']['wing-genes']:,} SNPs). Chosen from developmental biology, not from these data.",
+              f"- `fold-gwas`: the top {chk['n_snps']['fold-gwas']:,} SNPs by association with the targets, re-selected inside "
+              "every training set.",
+              f"- `pitchers-hits`: the {chk['n_snps']['pitchers-hits']:,} published GWAS hits that pass this panel's MAF ≥ 0.05 "
+              "filter (most of the 2,396 are rarer). **Leaky**: they were found using all lines, held-out ones included.", "",
+              "How well each code alone predicts held-out lines (ridge, before any diffusion model; mean over folds):", "",
+              "| code | shape PCs R² vs mean | spread R² vs mean | spread r |", "|---|---|---|---|"]
+        L += [f"| {r['code']} | {_fmt(r['shape_pc_r2'])} | {_fmt(r['spread_r2'])} | {_fmt(r['spread_r'], 2)} |"
+              for r in chk["summary"]]
+        nb = metrics.get("code_norms_by_code", {})
+        L += ["", "Mean code length, training vs held-out lines: " + "; ".join(
+            f"{c} {v['train']:.2f} vs {v['test']:.2f}" for c, v in sorted(nb.items())) + ".", ""]
     if len(tr):
         L += ["## Training lines (in-sample check)", "",
               "The same scores on lines the model was trained on. A large gap between these and the held-out scores means "
@@ -269,10 +350,15 @@ def main(argv=None) -> None:
     r.add_argument("--geno-pcs", type=int, default=10)
     r.add_argument("--n-gen", type=int, default=512)
     r.add_argument("--no-space", dest="space", action="store_false", help="skip the all-lines possibility-space model")
+    r.add_argument("--codes", nargs="*", default=[], help="also run with these gene-informed codes (from `codes`)")
+    c = sub.add_parser("codes", help="build gene-informed genotype codes per fold")
+    c.add_argument("--sets", nargs="*", default=["wing-genes", "fold-gwas", "pitchers-hits"])
+    c.add_argument("--n-top", type=int, default=2000, help="SNPs kept by the in-fold GWAS")
+    c.add_argument("--flank", type=int, default=5000, help="bp around each wing gene")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s",
                         stream=sys.stderr)
-    cmd_run(args)
+    {"run": cmd_run, "codes": cmd_codes}[args.cmd](args)
 
 
 if __name__ == "__main__":

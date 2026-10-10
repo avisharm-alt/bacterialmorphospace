@@ -14,9 +14,10 @@ image = (modal.Image.debian_slim(python_version="3.12")
 
 
 @app.function(image=image, gpu="T4", timeout=3600, retries=1)
-def fold_remote(payload: dict, fold: int, cfg: dict, n_gen: int, n_geno_pc: int, variant: str, seed: int) -> dict:
+def fold_remote(payload: dict, fold: int, cfg: dict, n_gen: int, n_geno_pc: int, variant: str, seed: int,
+                code: str | None = None) -> dict:
     from drosophila_wings.generative import run_fold
-    return run_fold(payload, fold, cfg, n_gen=n_gen, n_geno_pc=n_geno_pc, variant=variant, seed=seed)
+    return run_fold(payload, fold, cfg, n_gen=n_gen, n_geno_pc=n_geno_pc, variant=variant, seed=seed, code=code)
 
 
 @app.function(image=image, gpu="T4", timeout=3600, retries=1)

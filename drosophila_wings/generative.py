@@ -201,7 +201,7 @@ VARIANTS = ("geno", "shuffled", "residual")
 
 
 def run_fold(payload: dict, fold: int, cfg: dict, n_gen: int = 512, n_geno_pc: int = 10, variant: str = "geno",
-             score_train: bool = True, device: str | None = None, seed: int = 0) -> dict:
+             score_train: bool = True, device: str | None = None, seed: int = 0, code: str | None = None) -> dict:
     """Train on the lines outside `fold`, generate for every line, score. Returns plain dicts and arrays.
 
     variant  "geno": the model on whole wings (also scores the baselines and the genotype-free mode)
@@ -209,6 +209,8 @@ def run_fold(payload: dict, fold: int, cfg: dict, n_gen: int = 512, n_geno_pc: i
              "residual": the model on within-line residuals (wing minus its line-sex mean), so it can only learn how
                          genotype shapes the scatter around a line's mean. Generated residuals are added to the training
                          mean shape, and to the line's own observed mean (oracle) to compare spread alone.
+    code     None: genomic PCs of the GRM. Otherwise the name of a precomputed code in payload["codes"] (see
+             genecodes.py), shaped (folds, lines, dims); its methods are suffixed "[code]" and baselines are skipped.
     """
     from .diffusion import ConditionalDiffusion, DiffusionConfig
     assert variant in VARIANTS, variant
@@ -225,7 +227,11 @@ def run_fold(payload: dict, fold: int, cfg: dict, n_gen: int = 512, n_geno_pc: i
 
     Xtrain = Rtr if variant == "residual" else d.V[tr_w]
     space = ShapeSpace(Xtrain)
-    codes = genotype_codes(d.K, train, n_geno_pc)
+    if code is None:
+        codes = genotype_codes(d.K, train, n_geno_pc)
+    else:
+        codes = np.asarray(payload["codes"][code][fold], dtype=float)
+        n_geno_pc = codes.shape[1]
     train_codes = codes.copy()
     if variant == "shuffled":
         train_codes[train] = codes[train][rng.permutation(len(train))]
@@ -243,6 +249,8 @@ def run_fold(payload: dict, fold: int, cfg: dict, n_gen: int = 512, n_geno_pc: i
             "residual": {"diffusion-resid-nogeno": 0.0, "diffusion-resid-geno": 1.0}}[variant]
     samples = {name: space.decode(model.sample(G_all, S_all, w=w, seed=seed + 7 * fold + int(10 * w)))
                for name, w in gens.items()}
+    if code is not None:
+        samples = {f"{k}[{code}]": v for k, v in samples.items()}
 
     records, keep_samples = [], {}
     for j, i in enumerate(score_lines):
@@ -255,7 +263,7 @@ def run_fold(payload: dict, fold: int, cfg: dict, n_gen: int = 512, n_geno_pc: i
                 methods[k] = ymean + R if i in is_test else d.Y[i] + R
                 if i in is_test:
                     methods["oracle-mean+" + k] = d.Y[i] + R
-        if variant == "geno" and i in is_test:
+        if variant == "geno" and code is None and i in is_test:
             pick = _draw(Str, sg, rng)
             methods["mean+resid"] = ymean + Rtr[pick]
             methods["oracle-mean+resid"] = d.Y[i] + Rtr[pick]
@@ -268,7 +276,7 @@ def run_fold(payload: dict, fold: int, cfg: dict, n_gen: int = 512, n_geno_pc: i
         if i in is_test and j < 6:
             keep_samples[d.lines[i]] = {k: v[:128].astype(np.float32) for k, v in methods.items()}
     norms = np.linalg.norm(codes, axis=1)
-    return {"fold": int(fold), "variant": variant, "records": records, "loss_curve": model.losses,
+    return {"fold": int(fold), "variant": variant, "code": code or "genomic-pcs", "records": records, "loss_curve": model.losses,
             "n_shape_pcs": int(space.C.shape[0]), "samples": keep_samples,
             "code_norm_train": float(norms[train].mean()), "code_norm_test": float(norms[test].mean())}
 
