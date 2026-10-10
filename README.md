@@ -7,6 +7,8 @@ frequencies predict**?
 
 The deliverable is [`reports/attrition_report.md`](reports/attrition_report.md).
 
+The fruit-fly wing work (DGRP wing shape from genotype) is in [`drosophila_wings/`](drosophila_wings/README.md).
+
 **Result (BacDive API v2 snapshot of 2026-09, GTDB v232).** Bacterial trait space is sparser than independence predicts, and that
 sparsity is almost entirely phylogenetic.
 - **Core map.** 2,580 species occupy 90 of 216 six-trait cells, where independent traits would fill 117. The deficit shrinks from 27 to
