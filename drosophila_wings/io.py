@@ -64,6 +64,16 @@ def landmark_columns(columns) -> tuple[list[str], list[str]]:
     return [xs[i] for i in idx], [ys[i] for i in idx]
 
 
+def sex_code(value) -> str:
+    """F or M from labels such as "F", "female", "M", "male" and Pitchers' "probablyM"; anything else is kept upper-cased."""
+    s = str(value).strip().upper()
+    if s in ("F", "FEMALE"):
+        return "F"
+    if s in ("M", "MALE") or s.endswith("M"):
+        return "M"
+    return s
+
+
 @dataclass
 class Wings:
     """Wing-level landmark data: coords (n, k, 2) and a metadata frame with at least `line`."""
@@ -97,7 +107,7 @@ def load_wings(path: str | Path, line_col: str | None = None, sex_col: str | Non
         log.warning("dropping %d of %d wings with missing landmarks or line", (~ok).sum(), len(ok))
     meta = pd.DataFrame({"line": df.loc[ok, lc].map(line_id).to_numpy()})
     if sc is not None:
-        meta["sex"] = df.loc[ok, sc].astype(str).str.strip().str.upper().str[0].to_numpy()
+        meta["sex"] = df.loc[ok, sc].map(sex_code).to_numpy()
     for c in keep_cols:
         meta[c] = df.loc[ok, c].to_numpy()
     log.info("%s: %d wings, %d lines, %d landmarks", Path(path).name, ok.sum(), meta["line"].nunique(), len(xc))

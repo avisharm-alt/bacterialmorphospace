@@ -136,3 +136,8 @@ def test_simulated_relatives_are_grouped():
     lines = [str(x) for x in sim["ids"]]
     for a, b in sim["related_pairs"]:
         assert groups[lines.index(str(a))] == groups[lines.index(str(b))]
+
+
+@pytest.mark.parametrize("raw, want", [("F", "F"), ("female", "F"), ("M", "M"), ("probablyM", "M"), ("male", "M")])
+def test_sex_code(raw, want):
+    assert io.sex_code(raw) == want

@@ -7,8 +7,8 @@ These are steps 1 and 2 of the fruit-fly wing plan.
 
 The key question for step 3 (the diffusion model) is whether it beats this baseline on the same held-out lines.
 
-**Status.** The code is written and tested on simulated data only. The real data could not be downloaded from the build
-sandbox (figshare and the DGRP site are blocked by its network policy), so **no real results exist yet**.
+**Status (2026-10-10).** The pipeline has been run on the real data. The SNP model does **not** beat the mean shape on
+held-out lines once related lines are kept apart (see "Results" below).
 
 ## Data to fetch
 
@@ -17,7 +17,7 @@ Put the files in `/mnt/project-files/data/drosophila/raw/` (any path works, sinc
 | What | Source | Used as |
 |---|---|---|
 | Wing landmarks: one row per wing with line, sex and x/y for 48 landmarks/semilandmarks (~22,900 wings, 184 lines) | Pitchers et al. 2019, *Genetics* 211:1429, supplemental material on figshare: <https://gsajournals.figshare.com/articles/dataset/Supplemental_Material_for_Pitchers_et_al_2019/6790526> | `--wings` |
-| DGRP freeze 2 genotypes, plink `dgrp2.bed/.bim/.fam` (fastest), or `dgrp2.vcf` or `dgrp2.tgeno` | <http://dgrp2.gnets.ncsu.edu/data.html> | `--genotypes` |
+| DGRP freeze 2 genotypes (the run used `dgrp2.vcf.gz`, a copy from Zenodo record 155396), plink `dgrp2.bed/.bim/.fam` (fastest), or `dgrp2.vcf` or `dgrp2.tgeno` | <http://dgrp2.gnets.ncsu.edu/data.html> | `--genotypes` |
 | Wolbachia status and major inversion karyotypes (`wolbachia.xlsx`, `inversion.xlsx`) | same DGRP2 page | `--covariates` |
 
 The exact file names in the figshare item have not been checked from here. The loader finds the line, sex and landmark
@@ -68,9 +68,11 @@ python -m drosophila_wings.pipeline --data-dir /tmp/sim all --wings /tmp/sim/raw
 - Biallelic SNPs only (from VCF and tgeno), with MAF ≥ 0.05 and at most 20% missing. Both filters are recomputed on the
   phenotyped lines.
 - VanRaden GRM: ZZ'/m.
-- **Leakage control.** Lines whose normalised genomic relationship is above `--related-threshold` (0.05) are joined by
+- **Leakage control.** Lines whose normalised genomic relationship is above `--related-threshold` (0.1) are joined by
   single linkage into groups, and whole groups are held out together, in the outer folds and in the inner tuning folds
   alike. The report lists the most related pairs, so the threshold can be checked against the real distribution.
+  On the real panel, 0.1 is just above the 99th percentile of pairs (0.089). At 0.05, single linkage chains 79 of the
+  166 lines into one group, larger than a fold.
 
 **Models (`model.py`).** Every tangent coordinate is predicted at once.
 
@@ -100,3 +102,24 @@ large in the DGRP because LD decays fast. In simulation (150 lines, h² = 0.5, p
 while relatedness-blind folds reported about 0.09. A small honest R² on the real data would therefore not be a bug. It
 would be the bar that the diffusion model has to clear, and the reason why the comparison has to use the same grouped
 folds.
+
+## Results on the real data (2026-10-10)
+
+The inputs were `BothLabs_Wings_28Oct.csv` (22,923 wings, centred within sex × lab with `--cell-cols Lab`) and
+`dgrp2.vcf.gz` (1.68M SNPs after filtering). Covariates were the inversion dosages (`In2Lpred`, `In2Rpred`, `In3Rpred`)
+from `Hetinversionscores205.csv`, plus Wolbachia status. 166 lines are both phenotyped and genotyped. The full report is
+in `/mnt/project-files/data/drosophila/results/`.
+
+| folds | model | R² vs mean shape |
+|---|---|---|
+| related lines kept apart (0.1) | GBLUP | −0.001 ± 0.001 (permutation p = 0.36) |
+| related lines kept apart (0.1) | covariates / GBLUP + covariates | −0.025 / −0.028 |
+| relatedness-blind (leaky) | GBLUP | +0.037 ± 0.011 |
+
+- **Noise ceiling.** The line means are very reliable (split-half 0.994), so the near-zero score is not noise in the
+  targets.
+- **The genetic signal is real but only between relatives.** Pairs with normalised relationship above 0.2 have line-mean
+  shapes correlated about 0.34, against about 0 for unrelated pairs. GBLUP exploits that only when relatives straddle the
+  split. That is the leaky gain.
+- **Sensitivity.** The result holds at other thresholds: GBLUP R² is +0.009 at 0.2 and −0.002 at 0.05.
+- **Covariates.** OLS on the inversion and Wolbachia covariates overfits slightly (R² below 0).

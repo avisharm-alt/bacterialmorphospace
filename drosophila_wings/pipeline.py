@@ -226,7 +226,7 @@ def main(argv=None) -> None:
 
     def base_args(s):
         s.add_argument("--covariates", nargs="*", default=[], help="tables keyed by line (e.g. wolbachia.xlsx inversion.xlsx)")
-        s.add_argument("--related-threshold", type=float, default=0.05)
+        s.add_argument("--related-threshold", type=float, default=0.1)
         s.add_argument("--outer-k", type=int, default=5)
         s.add_argument("--inner-k", type=int, default=5)
         s.add_argument("--repeats", type=int, default=5)
