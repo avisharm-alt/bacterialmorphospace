@@ -1,6 +1,9 @@
 """Held-out-gene test of a gene-conditioned diffusion model over JUMP Cell Painting knockout profiles.
 
-    python -m jump_g2p.diffusion_cv <raw_dir> <homolog_pairs.tsv> <out_dir> [--local]
+    python -m jump_g2p.diffusion_cv <raw_dir> <homolog_pairs.tsv> <out_dir> [--local] [--codes=network|esm|evo2|esm+evo2]
+
+--codes=network (default) builds gene codes from DepMap, STRING and co-essentiality; esm / evo2 build them from the
+gene's protein (ESM-2 650M) or coding DNA (Evo 2 7B) embedding only, with no experimental data about the gene.
 
 Each sample is one well's morphology profile (599 Cell Painting features, reduced to K whitened PCs fitted on
 training wells). Per fold (whole chromosome arms held out, paralogs purged):
@@ -47,7 +50,27 @@ def coessentiality(D: np.ndarray, has: np.ndarray, k: int = 50, thr: float = 0.2
     return sparse.csr_matrix(W)
 
 
+def knn_graph(E: np.ndarray, k: int = 20) -> sparse.csr_matrix:
+    """Cosine k-nearest-neighbour graph of sequence embeddings (centred), weights = cosine similarity."""
+    Z = E - E.mean(0)
+    Z /= np.linalg.norm(Z, axis=1, keepdims=True) + 1e-9
+    rows, cols, vals = [], [], []
+    for s0 in range(0, len(Z), 2000):
+        C = Z[s0:s0 + 2000] @ Z.T
+        for r in range(len(C)):
+            C[r, s0 + r] = -1
+        idx = np.argpartition(-C, k, axis=1)[:, :k]
+        v = np.clip(np.take_along_axis(C, idx, 1), 0, None)
+        rows.append(np.repeat(np.arange(s0, s0 + len(C)), k)); cols.append(idx.ravel()); vals.append(v.ravel())
+    n = len(Z)
+    return sparse.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n))
+
+
 def predict_means(inp: dict, T: np.ndarray, tr: np.ndarray, te: np.ndarray) -> np.ndarray:
+    if "seq" in inp:  # sequence-only codes: ridge on the embedding plus its nearest training genes
+        a = ridge(inp["seq"][tr], T[tr], inp["seq"][te])
+        b = neighbours(inp["seq_knn"], T, tr, te, shrink=1.0)
+        return ((a + b) / 2).astype(np.float32)
     a = ridge(inp["depmap"][tr], T[tr], inp["depmap"][te])
     b = neighbours(inp["string"], T, tr, te, shrink=10.0)
     c = neighbours(inp["coess"], T, tr, te, shrink=1.0)
@@ -66,7 +89,27 @@ def energy_distance(a, b):
     return float(2 * cdist(a, b).mean() - cdist(a, a).mean() - cdist(b, b).mean())
 
 
-def main(raw: str, homologs: str, out: str, local: bool = False) -> None:
+def sequence_inputs(genes: pd.DataFrame, codes: str, derived: Path) -> dict:
+    """Embeddings aligned to `genes`; genes without a sequence get the mean embedding (so their code is ~the mean)."""
+    parts = []
+    if "esm" in codes:
+        z = np.load(derived / "esm2_650m_human.npz", allow_pickle=True)
+        prot = pd.read_csv(derived / "jump_proteins.tsv", sep="\t", dtype={"gene_id": str})
+        acc2g = dict(zip(prot["Entry"], prot["gene_id"]))
+        m = {acc2g[a]: e for a, e in zip(z["accession"], z["emb"])}
+        parts.append(np.stack([m.get(g) if g in m else np.full(z["emb"].shape[1], np.nan) for g in genes["gene_id"]]))
+    if "evo2" in codes:
+        z = np.load(derived / "evo2_cds.npz", allow_pickle=True)
+        m = dict(zip(z["symbol"], z["emb"]))
+        parts.append(np.stack([m.get(s) if s in m else np.full(z["emb"].shape[1], np.nan) for s in genes["symbol"]]))
+    E = np.hstack(parts).astype(np.float32)
+    miss = np.isnan(E).any(1)
+    E[miss] = np.nanmean(E[~miss], axis=0)
+    print(f"sequence codes ({codes}): {int((~miss).sum())} of {len(E)} genes have sequences", flush=True)
+    return {"seq": E, "seq_knn": knn_graph(E)}
+
+
+def main(raw: str, homologs: str, out: str, local: bool = False, codes: str = "network") -> None:
     raw_p, out_p = Path(raw), Path(out)
     out_p.mkdir(parents=True, exist_ok=True)
     jd = data.load(raw_p)
@@ -75,8 +118,11 @@ def main(raw: str, homologs: str, out: str, local: bool = False) -> None:
     w = jd.wells[jd.wells["Metadata_Symbol"].isin(sym2i)]
     W = w[jd.feats].to_numpy(dtype=np.float32)
     wg = w["Metadata_Symbol"].map(sym2i).to_numpy()
-    D, has = data.depmap(raw_p, g["gene_id"].tolist())
-    inp = {"depmap": D, "string": data.string_matrix(raw_p, g["symbol"].tolist()), "coess": coessentiality(D, has)}
+    if codes == "network":
+        D, has = data.depmap(raw_p, g["gene_id"].tolist())
+        inp = {"depmap": D, "string": data.string_matrix(raw_p, g["symbol"].tolist()), "coess": coessentiality(D, has)}
+    else:
+        inp = sequence_inputs(g, codes, Path(homologs).parent)
     arms = g["arm"].replace("", "unknown").to_numpy()
     splits = splits_for(g, pd.read_csv(homologs, sep="\t", header=None))
     rng = np.random.default_rng(SEED)
@@ -117,7 +163,7 @@ def main(raw: str, homologs: str, out: str, local: bool = False) -> None:
             rows.append(row)
     df = pd.DataFrame(rows)
     df.to_csv(out_p / "diffusion_per_gene.csv", index=False)
-    summ = {"n_genes": int(len(df)), "n_wells": int(len(W)), "K": K, "code_r2_per_pc": code_r2.tolist(), "results": {}}
+    summ = {"codes": codes, "n_genes": int(len(df)), "n_wells": int(len(W)), "K": K, "code_r2_per_pc": code_r2.tolist(), "results": {}}
     for name, d in [("all", df), ("reproducible quartile", df[df["reliability"] > df["reliability"].quantile(0.75)])]:
         s = {"n": int(len(d))}
         for m in ("ed", "mean_err"):
@@ -134,4 +180,5 @@ def main(raw: str, homologs: str, out: str, local: bool = False) -> None:
 
 if __name__ == "__main__":
     a = [x for x in sys.argv[1:] if not x.startswith("--")]
-    main(*a[:3], local="--local" in sys.argv)
+    codes = next((x.split("=", 1)[1] for x in sys.argv if x.startswith("--codes=")), "network")
+    main(*a[:3], local="--local" in sys.argv, codes=codes)

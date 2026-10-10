@@ -25,3 +25,9 @@ non-targeting control. The images are retrieved real wells for illustration, not
 (energy distance 2.095 vs 2.150, Wilcoxon p = 2e-12) and with shuffled genes (2.281, p = 2e-58); among the most
 reproducible quarter of knockouts the gain is 6% (3.38 vs 3.60). Never-imaged examples: NUP93 → closest imaged
 knockouts AHCTF1 (ELYS) and NUP153 (nuclear pore); SF3B1 → EFTUD2, SNRNP200 (spliceosome); RPL3 → EIF2S2, DDX10.
+
+## Sequence-only codes (negative result)
+`python -m jump_g2p.diffusion_cv ... --codes=esm` or `--codes=evo2` swaps the gene code for ESM-2 protein or Evo 2
+coding-DNA embeddings (`evo2_embed.py` builds the latter on Modal A100s). On the same held-out folds both are worse
+than the gene-free model (energy distance 2.178 and 2.183 vs 2.151; DepMap/STRING codes 2.095), so sequence alone does
+not transfer to unseen genes.
