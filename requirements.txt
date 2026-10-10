@@ -6,3 +6,6 @@ scipy>=1.11
 python-dotenv>=1.0
 pytest>=8
 openpyxl>=3.1   # drosophila_wings: DGRP2 .xlsx covariate tables
+torch>=2.2      # drosophila_wings step 3 (diffusion model); CPU wheel is enough for tests
+modal>=1.0      # drosophila_wings step 3 on GPU; install as modal[api-proxy-support] behind an HTTPS proxy
+matplotlib>=3.8 # drosophila_wings step 3 figures
