@@ -159,19 +159,29 @@ class ImageDiffusion:
         self.ema.requires_grad_(False)
         self.losses: list[float] = []
 
-    def fit(self, tiles: torch.Tensor, tile_code: torch.Tensor, log_every: int = 1000) -> "ImageDiffusion":
-        """tiles: (N, C, H, W) uint8 on device; tile_code: (N, c_dim) float on device."""
+    def fit(self, tiles: torch.Tensor, tile_code: torch.Tensor, log_every: int = 1000, ckpt=None,
+            ckpt_every: int = 2000) -> "ImageDiffusion":
+        """tiles: (N, C, H, W) uint8 on device; tile_code: (N, c_dim) float on device.
+
+        ckpt: optional (load() -> dict | None, save(dict)) pair; training resumes from the last saved step.
+        """
         cfg, dev = self.cfg, self.device
         gen = torch.Generator(device=dev).manual_seed(cfg.seed)
         opt = torch.optim.AdamW(self.net.parameters(), lr=cfg.lr, weight_decay=0.0)
         sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / cfg.warmup))
-        n, run, t0 = len(tiles), 0.0, time.time()
+        n, run, t0, start = len(tiles), 0.0, time.time(), 0
+        state = ckpt[0]() if ckpt else None
+        if state:
+            self.net.load_state_dict(state["net"]); self.ema.load_state_dict(state["ema"])
+            opt.load_state_dict(state["opt"]); sched.load_state_dict(state["sched"])
+            gen.set_state(state["gen"].to(gen.get_state().device)); self.losses = state["losses"]; start = state["step"]
+            print(f"resumed at step {start}", flush=True)
         self.net.train()
         net = self.net
         if dev.type == "cuda":   # ~1.7x faster on H100
             torch.backends.cudnn.benchmark = True
             net = torch.compile(self.net.to(memory_format=torch.channels_last))
-        for step in range(cfg.steps):
+        for step in range(start, cfg.steps):
             idx = torch.randint(0, n, (cfg.batch,), device=dev, generator=gen)
             x0 = augment(tiles[idx].float() / 127.5 - 1, gen)
             c = tile_code[idx] + cfg.cond_noise * torch.randn((cfg.batch, self.c_dim), device=dev, generator=gen)
@@ -198,6 +208,9 @@ class ImageDiffusion:
                 self.losses.append(run / (log_every / 20))
                 print(f"step {step + 1}: loss {self.losses[-1]:.4f} ({time.time() - t0:.0f}s)", flush=True)
                 run = 0.0
+            if ckpt and step % ckpt_every == ckpt_every - 1 and step + 1 < cfg.steps:
+                ckpt[1]({"net": self.net.state_dict(), "ema": self.ema.state_dict(), "opt": opt.state_dict(),
+                         "sched": sched.state_dict(), "gen": gen.get_state(), "losses": self.losses, "step": step + 1})
         return self
 
     @torch.no_grad()

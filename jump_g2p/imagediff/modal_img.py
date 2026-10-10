@@ -112,7 +112,7 @@ def _load_tiles(manifest_rows: list[dict]):
     return np.concatenate(T), np.concatenate(G), np.array(Wk)
 
 
-@app.function(image=gpu_image, gpu="H100", volumes={"/vol": vol}, timeout=6 * 3600, memory=65536)
+@app.function(image=gpu_image, gpu="H100", volumes={"/vol": vol}, timeout=6 * 3600, memory=65536, retries=3)
 def train_fold(k: int, manifest_rows: list[dict], codes, train_genes, test_genes, cfg: dict, n_gen: int = 128,
                n_ref: int = 6000) -> dict:
     """Train on crops of training genes; sample held-out genes four ways; return features of real and generated crops."""
@@ -137,12 +137,23 @@ def train_fold(k: int, manifest_rows: list[dict], codes, train_genes, test_genes
     C = torch.as_tensor(codes[gidx[tr]], device=dev)
     print(f"training on {int(tr.sum())} crops of {len(np.unique(gidx[tr]))} genes; "
           f"{sum(p.numel() for p in m.net.parameters()) / 1e6:.1f}M params", flush=True)
-    m.fit(X, C)
+    import os
+    os.makedirs("/vol/ckpt", exist_ok=True)
+    tag = "_".join(f"{a}{b}" for a, b in sorted(cfg.items()))
+    path = f"/vol/ckpt/fold{k}{'_' + tag if tag else ''}.pt"
+
+    def load():
+        vol.reload()
+        return torch.load(path, map_location="cuda", weights_only=False) if os.path.exists(path) else None
+
+    def save(state):
+        torch.save(state, path + ".tmp"); os.replace(path + ".tmp", path); vol.commit()
+
+    m.fit(X, C, ckpt=(load, save))
     del X, C
     torch.cuda.empty_cache()
     buf = io.BytesIO()
     torch.save({"ema": m.ema.state_dict(), "cfg": c.to_dict(), "c_dim": codes.shape[1]}, buf)
-    import os
     os.makedirs("/vol/models", exist_ok=True)
     with open(f"/vol/models/fold{k}.pt", "wb") as f:
         f.write(buf.getvalue())
