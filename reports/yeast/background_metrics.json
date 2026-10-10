@@ -1,0 +1,327 @@
+{
+  "config": {
+    "task": "background",
+    "epochs": 120,
+    "latent_dim": 32,
+    "samples": 32,
+    "seed": 20261010,
+    "device": "cpu",
+    "models": [
+      "gaussian",
+      "diffusion"
+    ],
+    "max_seconds_per_model": 120,
+    "dataset_sha256": "7c73509e3fe5d0bff80fa768b2ee21ab25cd2da41cd1385cdf892a89b896660f",
+    "split_sha256": "9f0d653ae255ef7887dd62bddb1829e37fedfa238698227bcb2fed2e2c6e97da",
+    "features": "esm2",
+    "embedding_sha256": "ff4e702520db888b2234115733d4430eebcc57fb72d92d5aa7bfd4a4435eb390",
+    "code_hashes": {
+      "__init__.py": "96acd5083dc6f8c3539dac5bff5bb138acf53607f35d6876178f97a59e4d54d8",
+      "atlas.py": "ae899259b568287b0ef2735139f9d46ce36e08c47941a7e4242c7fe0bffe9412",
+      "cli.py": "c2fdeb3c485108d89012bad9932238d5e4c1e6ae728548e6cc6cae4e550a3cb4",
+      "data.py": "0a230be2113fda3f799ed4446ca7c48d0fc8e37536ac415c6db140ad23923afd",
+      "embeddings.py": "0d49491c2ffb0b8899bf9bddac816f2892e225815202d7a9905ef91636ea3450",
+      "experiment.py": "059033e0ea316ad4f47b340e0a23853089c4ed8140b6bc56f3388c3bd132e725",
+      "metrics.py": "de3d79874150480b5ebc2a362183b771d998c423e514ffddcebdfb68512220e9",
+      "modal_app.py": "b19edf4abee3987f80d9d7e4bb05ae4c793ccdb54ecb3aafefeaa84c80995f91",
+      "models.py": "2d3807f0d75336873f300f64ae709ff47ea39caf4e9d4be5118e7df80fd1aa0a",
+      "report.py": "1169088240db6478d8260efa53b5dde509e5ab25e8431f0db125b89c2a7d0454",
+      "splits.py": "c8d205c013f397cadc142857d5d67e72f4009d44a4d8e36a3327ae765b7c637b"
+    }
+  },
+  "counts": {
+    "train": 6068,
+    "val": 297,
+    "test": 295
+  },
+  "retained_traits": 501,
+  "pca_explained_variance": 0.7599118947982788,
+  "pca_oracle_test_mse": 0.268088845377535,
+  "models": {
+    "mean": {
+      "mse": 1.5213057076348142,
+      "crps": 0.8497149985116448,
+      "energy": 1.0930764496714858,
+      "coverage90": 0.0,
+      "width90": 0.0,
+      "mean_probability_high_area_high_elongation": 0.0,
+      "joint_brier": 0.2440677966101695,
+      "axis_mse_wt_units": 39.70948028564453,
+      "test_count": 295,
+      "skill_vs_mean": 0.0
+    },
+    "empirical": {
+      "mse": 1.5396924203987494,
+      "crps": 0.6486483589385436,
+      "energy": 0.8354782241007466,
+      "coverage90": 0.7405054298183296,
+      "width90": 2.379320316377424,
+      "mean_probability_high_area_high_elongation": 0.1361228813559322,
+      "joint_brier": 0.1997119968220339,
+      "axis_mse_wt_units": 39.80397415161133,
+      "test_count": 295,
+      "skill_vs_mean": -0.01208613934179037
+    },
+    "raw_empirical": {
+      "mse": 1.5539114907473106,
+      "crps": 0.6422756213620882,
+      "energy": 0.8276792255959478,
+      "coverage90": 0.8010961128590277,
+      "width90": 2.7423392499736328,
+      "mean_probability_high_area_high_elongation": 0.13538135593220338,
+      "joint_brier": 0.2026416843220339,
+      "axis_mse_wt_units": 40.31635284423828,
+      "test_count": 295,
+      "skill_vs_mean": -0.021432761968131153
+    },
+    "ridge": {
+      "mse": 1.4865635946470714,
+      "crps": 0.6302415290636397,
+      "energy": 0.811906799747994,
+      "coverage90": 0.7936533712236544,
+      "width90": 2.8590964771606604,
+      "mean_probability_high_area_high_elongation": 0.286864406779661,
+      "joint_brier": 0.191796875,
+      "axis_mse_wt_units": 38.36063766479492,
+      "test_count": 295,
+      "skill_vs_mean": 0.02283703585241692
+    },
+    "shuffled_ridge": {
+      "mse": 1.5229061207302386,
+      "crps": 0.6365782229911459,
+      "energy": 0.8205429046512124,
+      "coverage90": 0.7954057985723468,
+      "width90": 2.860045661368425,
+      "mean_probability_high_area_high_elongation": 0.20667372881355933,
+      "joint_brier": 0.19134997351694916,
+      "axis_mse_wt_units": 39.271934509277344,
+      "test_count": 295,
+      "skill_vs_mean": -0.0010519996654141384
+    },
+    "gaussian": {
+      "mse": 1.5083268192410242,
+      "crps": 0.6430734226811566,
+      "energy": 0.8180727477540667,
+      "coverage90": 0.8247910957745526,
+      "width90": 2.950470651868607,
+      "mean_probability_high_area_high_elongation": 0.38495762711864406,
+      "joint_brier": 0.20950079449152542,
+      "axis_mse_wt_units": 39.105167388916016,
+      "test_count": 295,
+      "skill_vs_mean": 0.00853141372483801
+    },
+    "gaussian_wrong_genotype": {
+      "mse": 1.5254265322334897,
+      "crps": 0.6479785049114555,
+      "energy": 0.8239333856839981,
+      "coverage90": 0.8223079265198417,
+      "width90": 2.9518422089501324,
+      "mean_probability_high_area_high_elongation": 0.3829449152542373,
+      "joint_brier": 0.2061672404661017,
+      "axis_mse_wt_units": 39.35700607299805,
+      "test_count": 295,
+      "skill_vs_mean": -0.0027087419563305293
+    },
+    "diffusion": {
+      "mse": 1.5535383043552031,
+      "crps": 0.6495026708518957,
+      "energy": 0.8369822516402025,
+      "coverage90": 0.7422172603944653,
+      "width90": 2.2812729927833524,
+      "mean_probability_high_area_high_elongation": 0.2608050847457627,
+      "joint_brier": 0.20352224576271186,
+      "axis_mse_wt_units": 43.28553009033203,
+      "test_count": 295,
+      "skill_vs_mean": -0.021187455327766447
+    },
+    "diffusion_wrong_genotype": {
+      "mse": 1.611248672839386,
+      "crps": 0.6639202527618383,
+      "energy": 0.8542741499232931,
+      "coverage90": 0.7326161236848338,
+      "width90": 2.274280427843265,
+      "mean_probability_high_area_high_elongation": 0.2673728813559322,
+      "joint_brier": 0.2151747881355932,
+      "axis_mse_wt_units": 44.678192138671875,
+      "test_count": 295,
+      "skill_vs_mean": -0.05912221636531356
+    }
+  },
+  "paired_contrasts": {
+    "ridge_minus_empirical": {
+      "mse": {
+        "difference": -0.053128825751678085,
+        "ci95": [
+          -0.09014571343320057,
+          -0.019422352428050915
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      },
+      "crps": {
+        "difference": -0.018406829874903816,
+        "ci95": [
+          -0.026494423302852545,
+          -0.01077683539369592
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      },
+      "energy": {
+        "difference": -0.023571424352752723,
+        "ci95": [
+          -0.034269875313784885,
+          -0.014041850851058009
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      }
+    },
+    "gaussian_minus_ridge": {
+      "mse": {
+        "difference": 0.02176322459395261,
+        "ci95": [
+          -0.00869472175157468,
+          0.05115776703546733
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      },
+      "crps": {
+        "difference": 0.01283189361751699,
+        "ci95": [
+          0.004646288128252076,
+          0.01989295115826509
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      },
+      "energy": {
+        "difference": 0.006165948006072791,
+        "ci95": [
+          -0.0037132860513559413,
+          0.014902100187318785
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      }
+    },
+    "gaussian_minus_wrong_genotype": {
+      "mse": {
+        "difference": -0.017099712992465647,
+        "ci95": [
+          -0.042184323960448813,
+          0.007893454421599819
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      },
+      "crps": {
+        "difference": -0.0049050822302986585,
+        "ci95": [
+          -0.012706241709610723,
+          0.0032657717211943566
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      },
+      "energy": {
+        "difference": -0.005860637929931507,
+        "ci95": [
+          -0.015046032421700427,
+          0.004121959742758465
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      }
+    },
+    "diffusion_minus_ridge": {
+      "mse": {
+        "difference": 0.06697470970813188,
+        "ci95": [
+          0.00812321541958899,
+          0.13544721599563778
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      },
+      "crps": {
+        "difference": 0.019261141788256046,
+        "ci95": [
+          0.00811749224508859,
+          0.030827072909768938
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      },
+      "energy": {
+        "difference": 0.025075451892208736,
+        "ci95": [
+          0.011233150209923031,
+          0.039367881788455274
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      }
+    },
+    "diffusion_minus_wrong_genotype": {
+      "mse": {
+        "difference": -0.057710368484182616,
+        "ci95": [
+          -0.1335338624028704,
+          0.02625914591496237
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      },
+      "crps": {
+        "difference": -0.014417581909942495,
+        "ci95": [
+          -0.02869452437412401,
+          -0.0007190739072694914
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      },
+      "energy": {
+        "difference": -0.017291898283090624,
+        "ci95": [
+          -0.035686196532071716,
+          0.0003203524079059601
+        ],
+        "groups": 295,
+        "resamples": 1000,
+        "interpretation": "paired cluster bootstrap; negative favors first model for loss scores"
+      }
+    }
+  },
+  "seconds": 92.58824841701426,
+  "versions": {
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "scipy": "1.18.1",
+    "scikit-learn": "1.9.1",
+    "torch": "2.14.1"
+  },
+  "limitations": [
+    "Culture-level profiles, not images or single-cell distributions.",
+    "Exact sequence groups only unless supplied homology groups; homolog transfer is possible.",
+    "Genetic background is confounded with study.",
+    "Predictive sample spread is not established epistemic uncertainty.",
+    "Single-run exploratory results; no viability or causal generalization claim."
+  ]
+}

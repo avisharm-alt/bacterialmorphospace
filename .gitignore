@@ -16,3 +16,10 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 .venv/
+
+# Yeast morphology: reproducible data, trained weights, local environment
+.venv-yeast/
+data/yeast/
+reports/yeast/runs/
+reports/yeast/predictions/
+reports/yeast/atlas/

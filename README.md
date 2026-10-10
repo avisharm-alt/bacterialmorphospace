@@ -216,3 +216,11 @@ data/final/     strains.parquet (joined table, gitignored), per-panel species ta
 reports/        attrition_report.md, tables/*.tsv, run_manifest.json
 notebooks/      exploration only; nothing load-bearing
 ```
+
+## Yeast genotype-to-morphology investigation
+
+An independent yeast arm now lives in [`yeast_morphology/`](yeast_morphology/README.md).
+It pairs defined gene deletions with 501 measured CalMorph descriptors, tests held-out morphology combinations,
+compares sequence-conditioned ridge/Gaussian/diffusion predictors, and exports an interactive measured/predicted map.
+The [experiment specification](docs/yeast/experiment.md) records splits and interpretation limits.
+It includes a bounded Modal GPU runner and an atlas of unmeasured deletion × genetic-background combinations.

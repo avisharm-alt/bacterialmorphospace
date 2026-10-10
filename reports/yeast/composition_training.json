@@ -1,0 +1,36 @@
+{
+  "ridge": {
+    "alpha": 10000.0,
+    "val_mse_latent": 1.0004388093948364
+  },
+  "shuffled_ridge": {
+    "alpha": 10000.0,
+    "val_mse_latent": 1.0073565244674683
+  },
+  "gaussian": {
+    "kind": "gaussian",
+    "parameterization": "velocity",
+    "xdim": 481,
+    "zdim": 32,
+    "width": 128,
+    "steps": 100,
+    "seed": 20261010,
+    "best_epoch": 2,
+    "best_val_loss": 0.4952833652496338,
+    "stopped": "early_stopping",
+    "seconds": 2.350565156
+  },
+  "diffusion": {
+    "kind": "diffusion",
+    "parameterization": "velocity",
+    "xdim": 481,
+    "zdim": 32,
+    "width": 128,
+    "steps": 100,
+    "seed": 20261010,
+    "best_epoch": 2,
+    "best_val_loss": 1.0017207860946655,
+    "stopped": "early_stopping",
+    "seconds": 2.019598860000002
+  }
+}

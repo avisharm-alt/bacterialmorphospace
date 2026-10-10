@@ -1,0 +1,30 @@
+{
+  "task": "composition",
+  "epochs": 120,
+  "latent_dim": 32,
+  "samples": 32,
+  "seed": 20261010,
+  "device": "cuda",
+  "models": [
+    "gaussian",
+    "diffusion"
+  ],
+  "max_seconds_per_model": 300,
+  "dataset_sha256": "7c73509e3fe5d0bff80fa768b2ee21ab25cd2da41cd1385cdf892a89b896660f",
+  "split_sha256": "c48bd4d0624ec4b95378f0ee4f54d7ebc7cdc0600b3bcf73bdd0827d535d81ce",
+  "features": "esm2",
+  "embedding_sha256": "ff4e702520db888b2234115733d4430eebcc57fb72d92d5aa7bfd4a4435eb390",
+  "code_hashes": {
+    "__init__.py": "96acd5083dc6f8c3539dac5bff5bb138acf53607f35d6876178f97a59e4d54d8",
+    "atlas.py": "ae899259b568287b0ef2735139f9d46ce36e08c47941a7e4242c7fe0bffe9412",
+    "cli.py": "c2fdeb3c485108d89012bad9932238d5e4c1e6ae728548e6cc6cae4e550a3cb4",
+    "data.py": "0a230be2113fda3f799ed4446ca7c48d0fc8e37536ac415c6db140ad23923afd",
+    "embeddings.py": "0d49491c2ffb0b8899bf9bddac816f2892e225815202d7a9905ef91636ea3450",
+    "experiment.py": "059033e0ea316ad4f47b340e0a23853089c4ed8140b6bc56f3388c3bd132e725",
+    "metrics.py": "de3d79874150480b5ebc2a362183b771d998c423e514ffddcebdfb68512220e9",
+    "modal_app.py": "b19edf4abee3987f80d9d7e4bb05ae4c793ccdb54ecb3aafefeaa84c80995f91",
+    "models.py": "2d3807f0d75336873f300f64ae709ff47ea39caf4e9d4be5118e7df80fd1aa0a",
+    "report.py": "1169088240db6478d8260efa53b5dde509e5ab25e8431f0db125b89c2a7d0454",
+    "splits.py": "c8d205c013f397cadc142857d5d67e72f4009d44a4d8e36a3327ae765b7c637b"
+  }
+}
