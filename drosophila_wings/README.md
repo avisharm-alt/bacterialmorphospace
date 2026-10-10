@@ -197,3 +197,25 @@ and the within-line variance (spread) of generated vs real wings.
 genes or SNP sets from published wing-shape GWAS (Pitchers et al. 2019's hits), gene-level burden scores, or embeddings
 of the variants themselves, all scored on the same grouped folds. Mapping the possibility space without genotype (the
 genotype-free model, or conditioning on observed line means) is possible now.
+
+## Step 3b: gene-informed genotype codes (2026-10-10)
+
+`python -m drosophila_wings.diffusion_cv codes` builds per-fold codes (`genecodes.py`); `run --codes wing-genes fold-gwas
+pitchers-hits` scores the diffusion model with each, next to genomic PCs. A code is a line's phenotype predicted by kernel
+ridge from one SNP set, fitted on training lines only (out-of-fold for the training lines themselves). Gene coordinates
+are UCSC dm3 FlyBase tables in `raw/annotation/`.
+
+| held-out lines | ridge alone: shape R² | diffusion: energy ×10⁻³ (geno / no-geno / shuffled) | diffusion: line-mean R² |
+|---|---|---|---|
+| genomic PCs | −0.001 (step 2) | 15.4 / 14.5 / 15.6 | −0.047 |
+| `wing-genes` (82 genes ±5 kb, 45k SNPs) | 0.000 | 16.2 / 14.5 / 16.0 | −0.097 |
+| `fold-gwas` (top 2,000, re-selected in fold) | −0.049 | 18.6 / 14.5 / 18.2 | −0.211 |
+| `pitchers-hits` (831 published hits; leaky) | +0.045 | 17.1 / 14.5 / 17.8 | −0.109 |
+
+- **No gene-informed code helps.** Every conditioned model is worse than the genotype-free model and no better than its
+  own shuffled control, for line means and for within-line spread (spread r across held-out lines between −0.08 and +0.07).
+- **The only positive number is leaky.** Ridge on the published hits reaches R² +0.18 in four folds (−0.49 in the fifth),
+  because those SNPs were picked using the held-out lines. Re-selecting SNPs inside each fold (`fold-gwas`) gives −0.05.
+- **Sharper codes make the diffusion model worse.** Gene codes give each line a distinctive value, so the model uses them
+  as a line ID: training lines are reproduced almost exactly (energy 0.03×10⁻³ for `fold-gwas`), and new lines get a
+  confident wrong answer instead of a hedge.
