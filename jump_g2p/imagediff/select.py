@@ -1,11 +1,13 @@
 """Pick the gene subset, image folds and gene codes for the image diffusion model.
 
-    python -m jump_g2p.imagediff.select <raw_dir> <homolog_pairs.tsv> <out_dir> [--n-genes=300]
+    python -m jump_g2p.imagediff.select <raw_dir> <homolog_pairs.tsv> <out_dir> [--n-genes=300] [--codes=network|chain|depmap]
 
 Folds: the 10 chromosome-arm folds of jump_g2p.predictability, merged in pairs into 5 image folds, with every paralog
 of a test gene purged from the training set. Gene codes are exactly those of the working profile model
 (jump_g2p.diffusion_cv): cross-fitted DepMap ridge + STRING + co-essentiality predictions of the gene's mean profile
 PCs, computed from all 7,968 imaged genes (not only the image subset), with the test genes' own data never used.
+--codes=chain swaps in jump_g2p.diffusion_cv's sequence -> predicted DepMap codes (depmap: the same code built from the
+measured DepMap profile); the gene subset, folds and manifest are unchanged.
 
 Image subset: the most reproducible knockouts (split-half reliability), since most knockouts look like controls,
 plus non-targeting control wells on the same plates (used only for plate intensity normalisation).
@@ -22,7 +24,7 @@ import pandas as pd
 from sklearn.decomposition import PCA
 
 from .. import data
-from ..diffusion_cv import K, coessentiality, cross_fitted
+from ..diffusion_cv import K, chain_inputs, coessentiality, cross_fitted
 from ..predictability import splits_for
 
 N_IMG_FOLDS = 5
@@ -30,7 +32,7 @@ CTRL_PER_PLATE = 3
 SEED = 0
 
 
-def main(raw: str, homologs: str, out: str, n_genes: int = 300) -> None:
+def main(raw: str, homologs: str, out: str, n_genes: int = 300, codes_kind: str = "network") -> None:
     raw_p, out_p = Path(raw), Path(out)
     out_p.mkdir(parents=True, exist_ok=True)
     jd = data.load(raw_p)
@@ -39,8 +41,12 @@ def main(raw: str, homologs: str, out: str, n_genes: int = 300) -> None:
     w = jd.wells[jd.wells["Metadata_Symbol"].isin(sym2i)]
     W = w[jd.feats].to_numpy(dtype=np.float32)
     wg = w["Metadata_Symbol"].map(sym2i).to_numpy()
-    D, has = data.depmap(raw_p, g["gene_id"].tolist())
-    inp = {"depmap": D, "string": data.string_matrix(raw_p, g["symbol"].tolist()), "coess": coessentiality(D, has)}
+    if codes_kind in ("chain", "depmap"):
+        inp = chain_inputs(g, raw_p, Path(homologs).parent, homologs)
+        inp["chain"]["true_depmap"] = codes_kind == "depmap"
+    else:
+        D, has = data.depmap(raw_p, g["gene_id"].tolist())
+        inp = {"depmap": D, "string": data.string_matrix(raw_p, g["symbol"].tolist()), "coess": coessentiality(D, has)}
     arms = g["arm"].replace("", "unknown").to_numpy()
     splits = splits_for(g, pd.read_csv(homologs, sep="\t", header=None))
 
@@ -82,7 +88,7 @@ def main(raw: str, homologs: str, out: str, n_genes: int = 300) -> None:
     np.savez_compressed(out_p / "codes.npz", codes=np.stack(codes), test=np.stack(test_mask), train=np.stack(train_mask),
                         chosen=chosen)
     info = {"n_genes": int(len(chosen)), "n_gene_wells": int(len(sel)), "n_control_wells": int(len(ctrl)),
-            "n_plates": int(len(plates)), "K": K, "folds": N_IMG_FOLDS}
+            "n_plates": int(len(plates)), "K": K, "folds": N_IMG_FOLDS, "codes": codes_kind}
     (out_p / "select_info.json").write_text(json.dumps(info, indent=1))
     print(info)
 
@@ -90,4 +96,5 @@ def main(raw: str, homologs: str, out: str, n_genes: int = 300) -> None:
 if __name__ == "__main__":
     a = [x for x in sys.argv[1:] if not x.startswith("--")]
     n = next((int(x.split("=", 1)[1]) for x in sys.argv if x.startswith("--n-genes=")), 300)
-    main(*a[:3], n_genes=n)
+    kind = next((x.split("=", 1)[1] for x in sys.argv if x.startswith("--codes=")), "network")
+    main(*a[:3], n_genes=n, codes_kind=kind)

@@ -114,7 +114,7 @@ def _load_tiles(manifest_rows: list[dict]):
 
 @app.function(image=gpu_image, gpu="H100", volumes={"/vol": vol}, timeout=6 * 3600, memory=65536, retries=3)
 def train_fold(k: int, manifest_rows: list[dict], codes, train_genes, test_genes, cfg: dict, n_gen: int = 128,
-               n_ref: int = 6000) -> dict:
+               n_ref: int = 6000, run: str = "") -> dict:
     """Train on crops of training genes; sample held-out genes four ways; return features of real and generated crops."""
     import io
     import time
@@ -140,7 +140,9 @@ def train_fold(k: int, manifest_rows: list[dict], codes, train_genes, test_genes
     import os
     os.makedirs("/vol/ckpt", exist_ok=True)
     tag = "_".join(f"{a}{b}" for a, b in sorted(cfg.items()))
-    path = f"/vol/ckpt/fold{k}{'_' + tag if tag else ''}.pt"
+    pre = f"{run}/" if run else ""   # separate checkpoints, models and results per experiment (e.g. "chain")
+    os.makedirs(f"/vol/ckpt/{pre}", exist_ok=True)
+    path = f"/vol/ckpt/{pre}fold{k}{'_' + tag if tag else ''}.pt"
 
     def load():
         vol.reload()
@@ -154,8 +156,8 @@ def train_fold(k: int, manifest_rows: list[dict], codes, train_genes, test_genes
     torch.cuda.empty_cache()
     buf = io.BytesIO()
     torch.save({"ema": m.ema.state_dict(), "cfg": c.to_dict(), "c_dim": codes.shape[1]}, buf)
-    os.makedirs("/vol/models", exist_ok=True)
-    with open(f"/vol/models/fold{k}.pt", "wb") as f:
+    os.makedirs(f"/vol/models/{pre}", exist_ok=True)
+    with open(f"/vol/models/{pre}fold{k}.pt", "wb") as f:
         f.write(buf.getvalue())
     vol.commit()
 
@@ -185,7 +187,7 @@ def train_fold(k: int, manifest_rows: list[dict], codes, train_genes, test_genes
             "real_test_gene": gidx[te], "real_test_well": wkey[te], "losses": m.losses, **feats, **examples,
             "examples_real": tiles[ex_real], "examples_real_gene": gidx[ex_real],
             "minutes": (time.time() - t0) / 60}
-    os.makedirs("/vol/results", exist_ok=True)
-    np.savez_compressed(f"/vol/results/fold{k}.npz", **{a: np.asarray(b) for a, b in res.items()})
+    os.makedirs(f"/vol/results/{pre}", exist_ok=True)
+    np.savez_compressed(f"/vol/results/{pre}fold{k}.npz", **{a: np.asarray(b) for a, b in res.items()})
     vol.commit()
     return {"fold": k, "minutes": res["minutes"], "losses": m.losses}
