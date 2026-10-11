@@ -38,3 +38,17 @@ come out sparse and dying, like the real wells, while the gene-free and other-ge
 U2OS monolayers.
 
 Files: `summary.json`, `per_gene.csv`, `examples.png`; fold outputs in `../folds/`.
+
+## Fold 4 is a data problem (PLK1)
+
+PLK1, the JUMP positive control, has 569 wells in the image subset (other genes 4-12) and its knockout leaves crops
+mostly empty. It is 37% of fold 4's training wells, so 27% of that fold's training crops are near-empty (~5% in the
+other folds); the gene-free model and the DINO PCA (fitted on training crops) both inherit that skew. In fold 3 PLK1 is
+a test gene and dominates the real "other genes" reference. Fix: cap wells per gene (e.g. 12) and retrain.
+
+## Sequence-code run (stopped)
+
+A run with the chained sequence → predicted DepMap codes (`select --codes=chain`, `run train --run=chain`, same
+genes, folds and manifest) was stopped at step 16k of 30k on 2026-10-11 when the Modal budget ran out. Checkpoints:
+Modal volume `jump-image-crops` at ckpt/chain/fold<k>.pt, copies in data/jump/images_diffusion_chain/ckpt/chain/.
+Training resumes from them. Not yet sampled or scored.
