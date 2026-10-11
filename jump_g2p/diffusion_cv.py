@@ -1,9 +1,12 @@
 """Held-out-gene test of a gene-conditioned diffusion model over JUMP Cell Painting knockout profiles.
 
-    python -m jump_g2p.diffusion_cv <raw_dir> <homolog_pairs.tsv> <out_dir> [--local] [--codes=network|esm|evo2|esm+evo2]
+    python -m jump_g2p.diffusion_cv <raw_dir> <homolog_pairs.tsv> <out_dir> [--local] [--codes=network|esm|evo2|esm+evo2|chain|depmap] [--seed=N]
 
 --codes=network (default) builds gene codes from DepMap, STRING and co-essentiality; esm / evo2 build them from the
 gene's protein (ESM-2 650M) or coding DNA (Evo 2 7B) embedding only, with no experimental data about the gene.
+--codes=chain predicts each held-out gene's DepMap profile from its protein embedding (a ridge trained on the ~18k
+screened genes off the held-out arms, paralogs removed), then builds the code from that predicted profile
+(DepMap ridge plus co-essentiality neighbours); --codes=depmap builds the same code from the measured profile.
 
 Each sample is one well's morphology profile (599 Cell Painting features, reduced to K whitened PCs fitted on
 training wells). Per fold (whole chromosome arms held out, paralogs purged):
@@ -66,7 +69,37 @@ def knn_graph(E: np.ndarray, k: int = 20) -> sparse.csr_matrix:
     return sparse.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n))
 
 
-def predict_means(inp: dict, T: np.ndarray, tr: np.ndarray, te: np.ndarray) -> np.ndarray:
+def chain_depmap(c: dict, te: np.ndarray, exclude: np.ndarray) -> np.ndarray:
+    """Predicted DepMap profiles of JUMP genes `te` from their protein sequence alone. The sequence -> DepMap ridge
+    trains on every screened human gene except those on the arms of `te` or `exclude` and their paralogs."""
+    held = c["jmap"][np.concatenate([te, exclude])]
+    bad = np.isin(c["arm"], np.unique(c["arm"][held])) | c["isseq_missing"]
+    for i in held:
+        bad[list(c["hom"][i])] = True
+    bad[held] = True
+    trn = np.flatnonzero(c["has"] & ~bad)
+    p = PCA(64, random_state=SEED).fit(c["D"][trn])
+    Z = ridge(c["E"][trn], p.transform(c["D"][trn]), c["E"][c["jmap"][te]], n_pc=256)
+    return p.inverse_transform(Z).astype(np.float32)
+
+
+def predict_means(inp: dict, T: np.ndarray, tr: np.ndarray, te: np.ndarray, exclude=None) -> np.ndarray:
+    if "chain" in inp:  # sequence -> predicted DepMap -> shape: DepMap ridge and co-essentiality, on predicted profiles
+        c = inp["chain"]
+        if c.get("true_depmap"):  # reference: the same code built from the gene's measured DepMap profile
+            Dte = c["D"][c["jmap"][te]]
+        else:
+            Dte = chain_depmap(c, te, np.array([], int) if exclude is None else exclude)
+        Dtr = c["D"][c["jmap"][tr]]
+        ok = c["has"][c["jmap"][tr]]
+        a = ridge(Dtr[ok], T[tr][ok], Dte)
+        Zt = Dte - Dte.mean(1, keepdims=True); Zt /= np.linalg.norm(Zt, axis=1, keepdims=True) + 1e-9
+        Zr = Dtr - Dtr.mean(1, keepdims=True); Zr /= np.linalg.norm(Zr, axis=1, keepdims=True) + 1e-9
+        C = Zt @ Zr[ok].T
+        np.put_along_axis(C, np.argsort(-C, axis=1)[:, 50:], 0, axis=1)
+        C = np.where(C > 0.2, C, 0)
+        b = (C @ T[tr][ok] + T[tr].mean(0)) / (C.sum(1) + 1.0)[:, None]
+        return ((a + b) / 2).astype(np.float32)
     if "seq" in inp:  # sequence-only codes: ridge on the embedding plus its nearest training genes
         a = ridge(inp["seq"][tr], T[tr], inp["seq"][te])
         b = neighbours(inp["seq_knn"], T, tr, te, shrink=1.0)
@@ -80,7 +113,7 @@ def predict_means(inp: dict, T: np.ndarray, tr: np.ndarray, te: np.ndarray) -> n
 def cross_fitted(inp, T, tr, te, arms, n_inner=5):
     code = np.zeros_like(T, dtype=np.float32)
     for itr, ite in GroupKFold(n_splits=n_inner).split(tr, groups=arms[tr]):
-        code[tr[ite]] = predict_means(inp, T, tr[itr], tr[ite])
+        code[tr[ite]] = predict_means(inp, T, tr[itr], tr[ite], exclude=te)
     code[te] = predict_means(inp, T, tr, te)
     return code
 
@@ -109,7 +142,32 @@ def sequence_inputs(genes: pd.DataFrame, codes: str, derived: Path) -> dict:
     return {"seq": E, "seq_knn": knn_graph(E)}
 
 
-def main(raw: str, homologs: str, out: str, local: bool = False, codes: str = "network") -> None:
+def chain_inputs(g: pd.DataFrame, raw: Path, derived: Path, homologs: str) -> dict:
+    """Everything chain_depmap needs, over the universe of genes screened in DepMap or imaged in JUMP."""
+    z = [np.load(derived / f, allow_pickle=True) for f in ("esm2_650m_human.npz", "esm2_650m_depmap_extra.npz")]
+    prot = pd.concat([pd.read_csv(derived / f, sep="\t", dtype={"gene_id": str})
+                      for f in ("jump_proteins.tsv", "depmap_extra_proteins.tsv")])
+    acc2g = dict(zip(prot["Entry"], prot["gene_id"]))
+    emb = {acc2g[a]: e for zz in z for a, e in zip(zz["accession"], zz["emb"])}
+    cols = pd.read_csv(raw / "CRISPRGeneEffect_24Q2.csv", nrows=0, index_col=0).columns
+    u = list(dict.fromkeys(g["gene_id"].tolist() + [c.rsplit("(", 1)[1].rstrip(")") for c in cols]))
+    pos = {x: i for i, x in enumerate(u)}
+    D, has = data.depmap(raw, u)
+    gt = data.gene_table(raw).drop_duplicates("gene_id").set_index("gene_id")
+    arm = pd.Series(u).map(gt["arm"]).fillna("unknown").replace("", "unknown").to_numpy()
+    miss = np.array([x not in emb for x in u])
+    E = np.stack([emb.get(x, np.zeros(1280, np.float32)) for x in u]).astype(np.float32)
+    hom = [set() for _ in u]
+    h = pd.read_csv(homologs, sep="\t", header=None, dtype=str)
+    for a, b in zip(h[0], h[1]):
+        if a in pos and b in pos:
+            hom[pos[a]].add(pos[b]); hom[pos[b]].add(pos[a])
+    jmap = np.array([pos[x] for x in g["gene_id"]])
+    print(f"chain: {len(u)} genes, {int((has & ~miss).sum())} with DepMap and a protein sequence", flush=True)
+    return {"chain": {"E": E, "D": D, "has": has, "arm": arm, "hom": hom, "jmap": jmap, "isseq_missing": miss}}
+
+
+def main(raw: str, homologs: str, out: str, local: bool = False, codes: str = "network", seed: int = 0) -> None:
     raw_p, out_p = Path(raw), Path(out)
     out_p.mkdir(parents=True, exist_ok=True)
     jd = data.load(raw_p)
@@ -118,7 +176,10 @@ def main(raw: str, homologs: str, out: str, local: bool = False, codes: str = "n
     w = jd.wells[jd.wells["Metadata_Symbol"].isin(sym2i)]
     W = w[jd.feats].to_numpy(dtype=np.float32)
     wg = w["Metadata_Symbol"].map(sym2i).to_numpy()
-    if codes == "network":
+    if codes in ("chain", "depmap"):
+        inp = chain_inputs(g, raw_p, Path(homologs).parent, homologs)
+        inp["chain"]["true_depmap"] = codes == "depmap"
+    elif codes == "network":
         D, has = data.depmap(raw_p, g["gene_id"].tolist())
         inp = {"depmap": D, "string": data.string_matrix(raw_p, g["symbol"].tolist()), "coess": coessentiality(D, has)}
     else:
@@ -150,7 +211,7 @@ def main(raw: str, homologs: str, out: str, local: bool = False, codes: str = "n
         import modal
         from .modal_app import app, fold_remote
         with modal.enable_output(), app.run():
-            results = list(fold_remote.map(payloads, kwargs={"cfg": {}}))
+            results = list(fold_remote.map(payloads, kwargs={"cfg": {"seed": seed}}))
     rows = []
     for f, r in zip(folds, results):
         for j, i in enumerate(f["_te"]):
@@ -163,7 +224,7 @@ def main(raw: str, homologs: str, out: str, local: bool = False, codes: str = "n
             rows.append(row)
     df = pd.DataFrame(rows)
     df.to_csv(out_p / "diffusion_per_gene.csv", index=False)
-    summ = {"codes": codes, "n_genes": int(len(df)), "n_wells": int(len(W)), "K": K, "code_r2_per_pc": code_r2.tolist(), "results": {}}
+    summ = {"codes": codes, "train_seed": seed, "n_genes": int(len(df)), "n_wells": int(len(W)), "K": K, "code_r2_per_pc": code_r2.tolist(), "results": {}}
     for name, d in [("all", df), ("reproducible quartile", df[df["reliability"] > df["reliability"].quantile(0.75)])]:
         s = {"n": int(len(d))}
         for m in ("ed", "mean_err"):
@@ -181,4 +242,5 @@ def main(raw: str, homologs: str, out: str, local: bool = False, codes: str = "n
 if __name__ == "__main__":
     a = [x for x in sys.argv[1:] if not x.startswith("--")]
     codes = next((x.split("=", 1)[1] for x in sys.argv if x.startswith("--codes=")), "network")
-    main(*a[:3], local="--local" in sys.argv, codes=codes)
+    seed = int(next((x.split("=", 1)[1] for x in sys.argv if x.startswith("--seed=")), "0"))
+    main(*a[:3], local="--local" in sys.argv, codes=codes, seed=seed)

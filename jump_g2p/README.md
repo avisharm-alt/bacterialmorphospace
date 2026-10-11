@@ -31,3 +31,10 @@ knockouts AHCTF1 (ELYS) and NUP153 (nuclear pore); SF3B1 → EFTUD2, SNRNP200 (s
 coding-DNA embeddings (`evo2_embed.py` builds the latter on Modal A100s). On the same held-out folds both are worse
 than the gene-free model (energy distance 2.178 and 2.183 vs 2.151; DepMap/STRING codes 2.095), so sequence alone does
 not transfer to unseen genes.
+
+## Sequence → function → shape (chained)
+`--codes=chain` predicts each held-out gene's DepMap profile from its ESM-2 embedding (ridge trained on ~18k screened
+genes off the held-out arms, paralogs removed; extra proteins in `derived/depmap_extra_proteins.tsv`, embedded with
+`keio_g2p.modal_embed`) and builds the code from that prediction. It beats the gene-free model on held-out genes
+(energy distance 2.142 vs 2.150, p = 0.02; mean error p = 5e-8; same in a second training seed), about 40% of what
+the measured DepMap profile gives (`--codes=depmap`, 2.129). `--seed=N` sets the diffusion training seed.
