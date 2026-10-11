@@ -1,12 +1,13 @@
 """Driver for the image diffusion experiment.
 
     python -m jump_g2p.imagediff.run prep  <raw_dir> <sel_dir> [--plates=N]
-    python -m jump_g2p.imagediff.run train <sel_dir> [--folds=0,1,2,3,4] [--steps=N]
-    python -m jump_g2p.imagediff.run collect <sel_dir>
+    python -m jump_g2p.imagediff.run train <sel_dir> [--folds=0,1,2,3,4] [--steps=N] [--run=NAME]
+    python -m jump_g2p.imagediff.run collect <sel_dir> [--run=NAME]
 
 <sel_dir> is the output of jump_g2p.imagediff.select (manifest.csv, codes.npz). `train` spawns one detached Modal
 call per fold; `collect` downloads each fold<k>.npz of real and generated crop features (plus example crops) into
-<sel_dir>/folds/.
+<sel_dir>/folds/. --run keeps an experiment's checkpoints and results in their own volume subfolder (e.g. the chained
+sequence codes, from `select --codes=chain`), so it never resumes from another experiment's checkpoints.
 """
 from __future__ import annotations
 
@@ -33,7 +34,7 @@ def prep(raw: str, sel: str, n_plates: int | None = None) -> None:
             print(r, flush=True)
 
 
-def train(sel: str, folds: list[int], cfg: dict) -> None:
+def train(sel: str, folds: list[int], cfg: dict, run: str = "") -> None:
     import modal
     sel_p = Path(sel)
     man = pd.read_csv(sel_p / "manifest.csv")
@@ -51,15 +52,15 @@ def train(sel: str, folds: list[int], cfg: dict) -> None:
     # write <volume>/results/fold<k>.npz, which `collect` downloads
     f = modal.Function.from_name("jump-image-diffusion", "train_fold")
     for c in calls:
-        print("spawned fold", c[0], f.spawn(*c).object_id, flush=True)
+        print("spawned fold", c[0], f.spawn(*c, run=run).object_id, flush=True)
 
 
-def collect(sel: str) -> None:
+def collect(sel: str, run: str = "") -> None:
     import subprocess
     out = Path(sel) / "folds"
     out.mkdir(exist_ok=True)
     for k in range(5):
-        subprocess.run(["modal", "volume", "get", "--force", "jump-image-crops", f"results/fold{k}.npz", str(out / f"fold{k}.npz")])
+        subprocess.run(["modal", "volume", "get", "--force", "jump-image-crops", f"results/{run + '/' if run else ''}fold{k}.npz", str(out / f"fold{k}.npz")])
 
 
 if __name__ == "__main__":
@@ -69,6 +70,6 @@ if __name__ == "__main__":
         prep(a[0], a[1], int(opt["plates"]) if "plates" in opt else None)
     elif cmd == "train":
         cfg = {"steps": int(opt["steps"])} if "steps" in opt else {}
-        train(a[0], [int(x) for x in opt.get("folds", "0,1,2,3,4").split(",")], cfg)
+        train(a[0], [int(x) for x in opt.get("folds", "0,1,2,3,4").split(",")], cfg, opt.get("run", ""))
     elif cmd == "collect":
-        collect(a[0])
+        collect(a[0], opt.get("run", ""))
